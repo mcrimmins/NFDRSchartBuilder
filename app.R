@@ -60,6 +60,20 @@ station_metadata <- read.csv("FEMS_3.0_RAWS_Master_Station_List_and_Metadata.csv
 # UI
 # -----------------------------
 ui <- fluidPage(
+  # google analytics tracking code
+  tags$head(
+    # Google Analytics (GA4)
+    HTML("
+      <!-- Global site tag (gtag.js) - Google Analytics -->
+      <script async src='https://www.googletagmanager.com/gtag/js?id=G-JJ5NSHGJE6'></script>
+      <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-JJ5NSHGJE6');
+      </script>
+    ")
+  ),
   # set theme
   theme = bs_theme(bootswatch = "journal"),
   # Add the logo at the top of the page
@@ -71,7 +85,7 @@ ui <- fluidPage(
   # Footer with logo
   tags$div(
     style = "position: fixed; bottom: 0; width: 100%; text-align: center; padding: 10px; background-color: #f8f9fa;",
-    tags$img(src = "BP_app_logos.png", height = "70px") # Adjust src to point to your logo file and set the desired height
+    tags$img(src = "BP_app_logos.png", height = "60px") # Adjust src to point to your logo file and set the desired height
   ),
   #titlePanel("NFDRS Chart Builder"),
   sidebarLayout(
@@ -114,7 +128,18 @@ ui <- fluidPage(
                        tags$li("Data caching by station and fuel model for performance"),
                        tags$li("Static map can be saved by right clicking and selecting 'Save Image As...'"),
                        tags$li("Interactive map with zoom, pan and snap capabilities")
+                     ),
+                     hr(),
+                     h4("📬 Contact"),
+                     p("For questions or feedback about this tool, please contact:",
+                       tags$br(),
+                       tags$b("Mike Crimmins"), tags$br(),
+                       "Email: ", tags$a(href = "mailto:crimmins@arizona.edu", "crimmins@arizona.edu"), tags$br(),
+                       "Web: ", tags$a(href = "https://cales.arizona.edu/climate", "https://cales.arizona.edu/climate"), tags$br(),
+                       "GitHub: ", tags$a(href = "https://github.com/mcrimmins/NFDRSchartBuilder",
+                                          "https://github.com/mcrimmins/NFDRSchartBuilder")
                      )
+                     
                  )
         )
       )
@@ -143,14 +168,15 @@ server <- function(input, output, session) {
   # Render map
   output$station_map <- renderLeaflet({
     leaflet(station_metadata) |>
-      addTiles() |>
+      #addTiles() |>
+      addProviderTiles(providers$Esri.WorldTopoMap, group="topomap") |>
       addCircleMarkers(
         lng = ~longitude, lat = ~latitude,
         layerId = ~station_id,
         label = ~station_name,
         radius = 5,
         color = "blue",
-        fillOpacity = 0.7
+        fillOpacity = 0.5
       )
   })
   
@@ -198,7 +224,7 @@ server <- function(input, output, session) {
         label = ~station_name,
         radius = 5,
         color = ~ifelse(station_id %in% input$station_ids, "red", "blue"),
-        fillOpacity = 0.7
+        fillOpacity = 0.5
       )
     
     # Zoom to selected stations
@@ -375,7 +401,8 @@ server <- function(input, output, session) {
                           " vs Climatology (", historical_years$start_year, "–", historical_years$end_year, ")"),
         x = "Month-Day",
         y = paste(pretty_variable_name(input$variable), "(", input$daily_stat, ")"),
-        caption = paste0("University of Arizona - Climate Science Applications Program | Data from FEMS-API | Available through ", Sys.Date())
+        caption = paste0("EXPERIMENTAL PRODUCT | University of Arizona - Climate Science Applications Program | Data from FEMS-API | Observations through ",
+                         df_current$month_day[nrow(df_current)])
       ) +
       theme_bw(base_size = 14)
   })
@@ -455,10 +482,10 @@ server <- function(input, output, session) {
     
     # changes for tooltip
     clim_df$date_label <- as.Date(clim_df$month_day)
-    clim_df$text <- paste("Date:", clim_df$date_label, "<br>Mean:", round(clim_df$mean, 1))
+    clim_df$text <- paste("Date:", format(clim_df$date_label,"%b-%d"), "<br>Mean:", round(clim_df$mean, 1))
     
     df_current$date_label <- as.Date(paste0(input$plot_year, format(df_current$month_day, "-%m-%d")))
-    df_current$text <- paste("Date:", format(df_current$date_label,"%b-%d"), "<br>Value:", round(df_current$value, 1))
+    df_current$text <- paste("Date:", df_current$date_label, "<br>Value:", round(df_current$value, 1))
     
     
     
