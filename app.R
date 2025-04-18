@@ -1,6 +1,8 @@
 # NFDRS Chart Builder App
 # MAC 04/15/25
 
+# update metadata file from https://www.wildfire.gov/node/3473 or
+# https://fems.fs2c.usda.gov/download
 
 library(shiny)
 library(leaflet)
@@ -51,6 +53,16 @@ pretty_variable_name <- function(var) {
     tools::toTitleCase()
 }
 
+reverse_fill_vars <- c(
+  "oneHR_TL_FuelMoisture",
+  "tenHR_TL_FuelMoisture",
+  "hundredHR_TL_FuelMoisture",
+  "thousandHR_TL_FuelMoisture",
+  "woodyLFI_fuelMoisture",
+  "herbaceousLFI_fuelMoisture"
+)
+
+
 # -----------------------------
 # Load Station Metadata
 # -----------------------------
@@ -92,7 +104,8 @@ ui <- fluidPage(
     sidebarPanel(
       leafletOutput("station_map", height = 400),
       uiOutput("station_selector"),
-      selectInput("fuel_model", "Fuel Model", choices = c("Y", "V", "W","X","Z")),
+      #selectInput("fuel_model", "Fuel Model", choices = c("Y", "V", "W","X","Z")),
+      selectInput("fuel_model", "Fuel Model", choices = c("Y","Z")),
       uiOutput("variable_selector"),
       selectInput("daily_stat", "Daily Statistic", choices = c("mean", "min", "max")),
       numericInput("plot_year", "Plot Year",
@@ -293,7 +306,13 @@ server <- function(input, output, session) {
       "Burning Index (BI)"             = "burningIndex",
       "Ignition Component (IC)"        = "ignitionComponent",
       "Spread Component (SC)"          = "spreadComponent",
-      "Keetch-Byram Drought Index"     = "kbdi"
+      "Keetch-Byram Drought Index"     = "kbdi",
+      "1-hr Fuel Moisture"             = "oneHR_TL_FuelMoisture",
+      "10-hr Fuel Moisture"            = "tenHR_TL_FuelMoisture",
+      "100-hr Fuel Moisture"           = "hundredHR_TL_FuelMoisture",
+      "1000-hr Fuel Moisture"          = "thousandHR_TL_FuelMoisture",
+      "Live Woody Fuel Moisture"       = "woodyLFI_fuelMoisture",
+      "Live Herbaceous Fuel Moisture"  = "herbaceousLFI_fuelMoisture"
     )
     
     available_vars <- names(all_data_cache())[sapply(all_data_cache(), is.numeric)]
@@ -321,7 +340,9 @@ server <- function(input, output, session) {
       mutate(year = as.integer(format(date, "%Y")),
              month_day = as.Date(format(date, "2024-%m-%d")))
     
-    historical_years <- all_data %>% filter(year != input$plot_year) %>%
+    #historical_years <- all_data %>% filter(year != input$plot_year) %>%
+    #  summarise(start_year = min(year, na.rm = TRUE), end_year = max(year, na.rm = TRUE))
+    historical_years <- all_data %>% filter(year >= 2005 & year <= 2022) %>%
       summarise(start_year = min(year, na.rm = TRUE), end_year = max(year, na.rm = TRUE))
     
     clim_df <- all_data %>% filter(year != input$plot_year) %>%
@@ -335,7 +356,8 @@ server <- function(input, output, session) {
       group_by(month_day) %>%
       summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
     
-    df_hist <- all_data %>% filter(year != input$plot_year)
+    #df_hist <- all_data %>% filter(year != input$plot_year)
+    df_hist <- all_data %>% filter(year >= 2005 & year <= 2022)
     
     p90_global <- quantile(df_hist$value, 0.90, na.rm = TRUE)
     p97_global <- quantile(df_hist$value, 0.97, na.rm = TRUE)
@@ -374,6 +396,12 @@ server <- function(input, output, session) {
     # }
     station_label <- paste(station_names, collapse = ", ")
     
+    # remapped fill for moisture-type variables
+    default_fill <- c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2",
+                      "90–97%" = "#ffcc80", "97–100%" = "#ff9933")
+    moisture_fill <- c("0–33%" = "#ff9933", "33–66%" = "#ffcc80", "66–90%" = "#ffe0b2",
+                       "90–97%" = "#e6f2ff", "97–100%" = "#cce5ff")
+    fill_values <- if (input$variable %in% reverse_fill_vars) moisture_fill else default_fill
     
     ggplot() +
       geom_ribbon(data = ribbon_data,
@@ -390,9 +418,11 @@ server <- function(input, output, session) {
       annotate("text", x = as.Date("2024-01-03"), y = p25_global,
                label = "25%", hjust = 0, vjust = -0.5, size = 3, color = "gray40") +
       scale_x_date(date_labels = "%b-%d", date_breaks = "1 month",expand = expansion(mult = c(0, 0))) +
+      # scale_fill_manual("Daily %tile Range",
+      #                   values = c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2", 
+      #                              "90–97%" = "#ffcc80", "97–100%" = "#ff9933")) +
       scale_fill_manual("Daily %tile Range",
-                        values = c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2", 
-                                   "90–97%" = "#ffcc80", "97–100%" = "#ff9933")) +
+                        values = fill_values) +
       scale_color_manual(name = NULL,
                          values = setNames(c("blue", "orangered"), c("Mean", paste0(input$plot_year, " Observed")))) +
       labs(
@@ -480,6 +510,13 @@ server <- function(input, output, session) {
     # }
     station_label <- paste(station_names, collapse = ", ")
     
+    # remapped fill for moisture-type variables
+    default_fill <- c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2",
+                      "90–97%" = "#ffcc80", "97–100%" = "#ff9933")
+    moisture_fill <- c("0–33%" = "#ff9933", "33–66%" = "#ffcc80", "66–90%" = "#ffe0b2",
+                       "90–97%" = "#e6f2ff", "97–100%" = "#cce5ff")
+    fill_values <- if (input$variable %in% reverse_fill_vars) moisture_fill else default_fill
+    
     # changes for tooltip
     clim_df$date_label <- as.Date(clim_df$month_day)
     clim_df$text <- paste("Date:", format(clim_df$date_label,"%b-%d"), "<br>Mean:", round(clim_df$mean, 1))
@@ -487,15 +524,14 @@ server <- function(input, output, session) {
     df_current$date_label <- as.Date(paste0(input$plot_year, format(df_current$month_day, "-%m-%d")))
     df_current$text <- paste("Date:", df_current$date_label, "<br>Value:", round(df_current$value, 1))
     
-    
-    
+    # plotly
     p<-ggplot() +
       geom_ribbon(data = ribbon_data,
                   aes(x = month_day, ymin = ymin, ymax = ymax, fill = range), alpha = 0.7) +
       geom_line(data = clim_df, aes(x = month_day, y = mean, color = "Mean",group = 1, text = text), linewidth = 0.6) +
       geom_line(data = df_current, aes(x = month_day, y = value, color = paste0(input$plot_year, " Observed"),group = 1, text = text),
                 linewidth = 1.2) +
-
+      
       geom_hline(yintercept = c(p25_global, p50_global, p90_global, p97_global), color = "gray40", linetype = "dashed") +
       annotate("text", x = as.Date("2024-01-03"), y = p90_global,
                label = "90%", hjust = 0, vjust = -0.5, size = 3, color = "gray40") +
@@ -506,9 +542,11 @@ server <- function(input, output, session) {
       annotate("text", x = as.Date("2024-01-03"), y = p25_global,
                label = "25%", hjust = 0, vjust = -0.5, size = 3, color = "gray40") +
       scale_x_date(date_labels = "%b-%d", date_breaks = "1 month",expand = expansion(mult = c(0, 0))) +
+      # scale_fill_manual("Daily %tile Range",
+      #                   values = c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2", 
+      #                              "90–97%" = "#ffcc80", "97–100%" = "#ff9933")) +
       scale_fill_manual("Daily %tile Range",
-                        values = c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2", 
-                                   "90–97%" = "#ffcc80", "97–100%" = "#ff9933")) +
+                        values = fill_values) +
       scale_color_manual(name = NULL,
                          values = setNames(c("blue", "orangered"), c("Mean", paste0(input$plot_year, " Observed")))) +
       labs(
@@ -520,13 +558,10 @@ server <- function(input, output, session) {
         caption = paste0("Data from FEMS | Updated through ", Sys.Date())
       ) +
       theme_bw(base_size = 14)
-
+    
     ggplotly(p, tooltip = "text")
     
   })
-  
-  
-  
   
 }
 
