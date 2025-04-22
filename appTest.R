@@ -17,6 +17,37 @@ library(plotly)
 # -----------------------------
 # Helper Functions
 # -----------------------------
+# download_nfdrs_data <- function(station_id, start_date, end_date,
+#                                 fuel_model = "Y", dataset = "observation",
+#                                 local_tz = "America/Phoenix") {
+#   base_url <- "https://fems.fs2c.usda.gov/api/climatology/download-nfdr"
+#   start_iso <- paste0(start_date, "T00:00:00Z")
+#   end_iso <- paste0(end_date, "T23:59:59Z")
+#   query <- list(
+#     stationIds = station_id,
+#     startDate = start_iso,
+#     endDate = end_iso,
+#     dataFormat = "csv",
+#     dataset = dataset,
+#     fuelModels = fuel_model
+#   )
+#   url <- paste0(base_url, "?", paste0(names(query), "=", query, collapse = "&"))
+#   message("Fetching data from: ", url)
+#   
+#   tryCatch({
+#     df <- read.csv(url, stringsAsFactors = FALSE)
+#     df$observationTime_UTC <- as.POSIXct(df$observationTime, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC")
+#     df$observationTime_local <- format(df$observationTime_UTC, tz = local_tz, usetz = FALSE)
+#     df$observationTime_local <- as.POSIXct(df$observationTime_local, tz = local_tz)
+#     df$date <- as.Date(df$observationTime_local)
+#     df$hour <- as.integer(format(df$observationTime_local, "%H"))
+#     return(df)
+#   }, error = function(e) {
+#     warning("Failed to download or parse the data: ", conditionMessage(e))
+#     return(NULL)
+#   })
+# }
+
 #####
 # updated download_nfdrs_data function with dynamic timezone
 
@@ -64,6 +95,7 @@ download_nfdrs_data <- function(station_id, start_date, end_date,
 }
 
 #####
+
 
 pretty_variable_name <- function(var) {
   gsub("([a-z])([A-Z])", "\\1 \\2", var) |>
@@ -362,7 +394,7 @@ server <- function(input, output, session) {
     #  summarise(start_year = min(year, na.rm = TRUE), end_year = max(year, na.rm = TRUE))
     historical_years <- all_data %>% filter(year >= 2005 & year <= 2022) %>%
       summarise(start_year = min(year, na.rm = TRUE), end_year = max(year, na.rm = TRUE))
-    
+        
     clim_df <- all_data %>% filter(year != input$plot_year) %>%
       group_by(month_day) %>%
       summarise(min = min(value, na.rm = TRUE),
@@ -580,7 +612,7 @@ server <- function(input, output, session) {
     ggplotly(p, tooltip = "text")
     
   })
-  
+
 }
 
 # Run the app
