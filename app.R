@@ -54,7 +54,8 @@ download_nfdrs_data <- function(station_id, start_date, end_date,
     df$observationTime_UTC <- as.POSIXct(df$observationTime, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC")
     df$observationTime_local <- format(df$observationTime_UTC, tz = local_tz, usetz = FALSE)
     df$observationTime_local <- as.POSIXct(df$observationTime_local, tz = local_tz)
-    df$date <- as.Date(df$observationTime_local)
+    #df$date <- as.Date(df$observationTime_local)
+    df$date <- as.Date(format(df$observationTime_local, tz = local_tz))
     df$hour <- as.integer(format(df$observationTime_local, "%H"))
     return(df)
   }, error = function(e) {
