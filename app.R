@@ -13,6 +13,7 @@ library(purrr)
 library(tibble)
 library(bslib)
 library(plotly)
+library(RColorBrewer)
 
 # -----------------------------
 # Helper Functions
@@ -114,10 +115,10 @@ ui <- fluidPage(
     tags$img(src = "UAlogo.jpg", height = "60px")  # Adjust the height as needed
   ),
   # Footer with logo
-  tags$div(
-    style = "position: fixed; bottom: 0; width: 100%; text-align: center; padding: 10px; background-color: #f8f9fa;",
-    tags$img(src = "BP_app_logos.png", height = "60px") # Adjust src to point to your logo file and set the desired height
-  ),
+  # tags$div(
+  #   style = "position: fixed; bottom: 0; width: 100%; text-align: center; padding: 10px; background-color: #f8f9fa;",
+  #   tags$img(src = "BP_app_logos.png", height = "60px") # Adjust src to point to your logo file and set the desired height
+  # ),
   #titlePanel("NFDRS Chart Builder"),
   sidebarLayout(
     sidebarPanel(
@@ -127,9 +128,22 @@ ui <- fluidPage(
       selectInput("fuel_model", "Fuel Model", choices = c("Y","Z")),
       uiOutput("variable_selector"),
       selectInput("daily_stat", "Daily Statistic", choices = c("mean", "min", "max")),
-      numericInput("plot_year", "Plot Year",
+      numericInput("plot_year", "Plot Year (2005-Present)",
                    value = as.numeric(format(Sys.Date(), "%Y")),
-                   min = 2005, max = as.numeric(format(Sys.Date(), "%Y")))
+                   min = 2005, max = as.numeric(format(Sys.Date(), "%Y"))),
+      
+      # Container div for logo and contact info
+      div(
+        style = "text-align: center;",  # center them (optional)
+        
+        # Logo image (assumes file is in www/my_logo.png)
+        tags$img(src = "BP_app_logos.png", style = "width: 100%; height: auto;"),
+        
+        # Contact info
+        tags$p("Contact: Mike Crimmins, crimmins@arizona.edu"),
+        tags$p("https://cales.arizona.edu/climate/")
+      )
+      
     ),
     # mainPanel(
     #   plotOutput("climatology_plot", height = "700px")
@@ -137,7 +151,14 @@ ui <- fluidPage(
     mainPanel(
       tabsetPanel(
         tabPanel("Static Plot", plotOutput("climatology_plot", height = "700px")),
-        tabPanel("Interactive Plot", plotlyOutput("plotly_climatology_plot", height = "700px")),
+        #tabPanel("Interactive Plot", plotlyOutput("plotly_climatology_plot", height = "700px")),
+        tabPanel("Interactive Plot",
+                 div(
+                   plotlyOutput("plotly_climatology_plot", height = "700px"),
+                   br(),
+                   checkboxInput("show_hist_years", "Show Historic Years", value = TRUE)
+                 )
+        ),
         tabPanel("About", 
                  div(style = "padding: 20px;",
                      h3("🔥 NFDRS Chart Builder"),
@@ -459,128 +480,172 @@ server <- function(input, output, session) {
   
   ##### plotly version
   # Plot rendering
+  
   output$plotly_climatology_plot <- renderPlotly({
     req(all_data_cache(), input$variable, input$daily_stat, input$plot_year)
     all_data <- all_data_cache()
     
     summary_fun <- match.fun(input$daily_stat)
+    
     stn_data <- all_data %>%
       group_by(station_id, date) %>%
       summarise(value = summary_fun(.data[[input$variable]], na.rm = TRUE), .groups = "drop") %>%
-      mutate(year = as.integer(format(date, "%Y")),
-             month_day = as.Date(format(date, "2024-%m-%d")))
+      mutate(
+        year = as.integer(format(date, "%Y")),
+        month_day = as.Date(format(date, "2024-%m-%d"))
+      )
     
     all_data <- stn_data %>%
       group_by(date) %>%
       summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
-      mutate(year = as.integer(format(date, "%Y")),
-             month_day = as.Date(format(date, "2024-%m-%d")))
+      mutate(
+        year = as.integer(format(date, "%Y")),
+        month_day = as.Date(format(date, "2024-%m-%d"))
+      )
     
-    historical_years <- all_data %>% filter(year != input$plot_year) %>%
-      summarise(start_year = min(year, na.rm = TRUE), end_year = max(year, na.rm = TRUE))
+    df_hist_all <- all_data %>%
+      filter(year != input$plot_year) %>%
+      mutate(year_str = as.character(year)) %>%
+      group_by(year_str, month_day) %>%
+      summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(
+        text = paste("Year:", year_str, "<br>Date:", format(month_day, "%b-%d"), "<br>Value:", round(value, 1))
+      )
     
-    clim_df <- all_data %>% filter(year != input$plot_year) %>%
+    clim_df <- df_hist_all %>%
       group_by(month_day) %>%
-      summarise(min = min(value, na.rm = TRUE),
-                max = max(value, na.rm = TRUE),
-                mean = mean(value, na.rm = TRUE),
-                median = median(value, na.rm = TRUE), .groups = "drop")
+      summarise(mean = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(
+        text = paste("Date:", format(month_day, "%b-%d"), "<br>Mean:", round(mean, 1))
+      )
     
-    df_current <- all_data %>% filter(year == input$plot_year) %>%
+    df_current <- all_data %>%
+      filter(year == input$plot_year) %>%
       group_by(month_day) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+      summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(
+        text = paste("Date:", format(month_day, "%b-%d"), "<br>Value:", round(value, 1))
+      )
     
-    df_hist <- all_data %>% filter(year != input$plot_year)
-    
-    p90_global <- quantile(df_hist$value, 0.90, na.rm = TRUE)
-    p97_global <- quantile(df_hist$value, 0.97, na.rm = TRUE)
-    p50_global <- quantile(df_hist$value, 0.50, na.rm = TRUE)
-    p25_global <- quantile(df_hist$value, 0.25, na.rm = TRUE)
-    
-    ribbon_df <- df_hist %>%
+    ribbon_df <- df_hist_all %>%
       group_by(month_day) %>%
-      summarise(q0 = quantile(value, 0.00, na.rm = TRUE),
-                q33 = quantile(value, 0.33, na.rm = TRUE),
-                q66 = quantile(value, 0.66, na.rm = TRUE),
-                q90 = quantile(value, 0.90, na.rm = TRUE),
-                q97 = quantile(value, 0.97, na.rm = TRUE),
-                q100 = quantile(value, 1.00, na.rm = TRUE),
-                .groups = "drop")
+      summarise(
+        q0 = quantile(value, 0.00, na.rm = TRUE),
+        q33 = quantile(value, 0.33, na.rm = TRUE),
+        q66 = quantile(value, 0.66, na.rm = TRUE),
+        q90 = quantile(value, 0.90, na.rm = TRUE),
+        q97 = quantile(value, 0.97, na.rm = TRUE),
+        q100 = quantile(value, 1.00, na.rm = TRUE),
+        .groups = "drop"
+      )
     
     ribbon_data <- tibble(
       range = c("0–33%", "33–66%", "66–90%", "90–97%", "97–100%"),
       ymin = c("q0", "q33", "q66", "q90", "q97"),
       ymax = c("q33", "q66", "q90", "q97", "q100")
     ) %>% pmap_dfr(function(range, ymin, ymax) {
-      ribbon_df %>% transmute(month_day,
-                              ymin = .data[[ymin]],
-                              ymax = .data[[ymax]],
-                              range = range)
+      ribbon_df %>%
+        transmute(
+          month_day,
+          ymin = .data[[ymin]],
+          ymax = .data[[ymax]],
+          range = range
+        )
     })
     
-    station_names <- station_metadata %>%
-      filter(station_id %in% selected_stations()) %>%
-      pull(station_name) %>% unique()
-    
-    # station_label <- if (length(station_names) <= 3) {
-    #   paste(station_names, collapse = ", ")
-    # } else {
-    #   paste0(length(station_names), " stations: ", paste(station_names[1:3], collapse = ", "), ", …")
-    # }
-    station_label <- paste(station_names, collapse = ", ")
-    
-    # remapped fill for moisture-type variables
     default_fill <- c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2",
                       "90–97%" = "#ffcc80", "97–100%" = "#ff9933")
     moisture_fill <- c("0–33%" = "#ff9933", "33–66%" = "#ffcc80", "66–90%" = "#ffe0b2",
                        "90–97%" = "#e6f2ff", "97–100%" = "#cce5ff")
     fill_values <- if (input$variable %in% reverse_fill_vars) moisture_fill else default_fill
     
-    # changes for tooltip
-    clim_df$date_label <- as.Date(clim_df$month_day)
-    clim_df$text <- paste("Date:", format(clim_df$date_label,"%b-%d"), "<br>Mean:", round(clim_df$mean, 1))
+    # color_values <- c(
+    #   setNames(rep("gray60", length(unique(df_hist_all$year_str))), unique(df_hist_all$year_str)),
+    #   "Mean" = "blue",
+    #   "Observed" = "orangered"
+    # )
     
-    df_current$date_label <- as.Date(paste0(input$plot_year, format(df_current$month_day, "-%m-%d")))
-    df_current$text <- paste("Date:", df_current$date_label, "<br>Value:", round(df_current$value, 1))
+    # How many historic years
+    n_hist_years <- length(unique(df_hist_all$year_str))
     
-    # plotly
-    p<-ggplot() +
+    # Generate distinct colors
+    hist_colors <- colorRampPalette(brewer.pal(8, "Dark2"))(n_hist_years)
+    
+    # Combine
+    # color_values <- c(
+    #   setNames(hist_colors, unique(df_hist_all$year_str)),   # historic years
+    #   "Mean" = "blue",                                        # mean line
+    #   "Observed" = "orangered"                                # observed current year
+    # )
+    
+    # obs yr label
+    obsYr<-paste0(input$plot_year, " Observed")
+    
+    # Combine
+    color_values <- c(
+      setNames(hist_colors, unique(df_hist_all$year_str)),   # historic years
+      "Mean" = "blue",                                        # mean line
+      setNames("orangered", obsYr)                                # observed current year
+    )
+    
+    p <- ggplot() +
       geom_ribbon(data = ribbon_data,
-                  aes(x = month_day, ymin = ymin, ymax = ymax, fill = range), alpha = 0.7) +
-      geom_line(data = clim_df, aes(x = month_day, y = mean, color = "Mean",group = 1, text = text), linewidth = 0.6) +
-      geom_line(data = df_current, aes(x = month_day, y = value, color = paste0(input$plot_year, " Observed"),group = 1, text = text),
-                linewidth = 1.2) +
-      
-      geom_hline(yintercept = c(p25_global, p50_global, p90_global, p97_global), color = "gray40", linetype = "dashed") +
-      annotate("text", x = as.Date("2024-01-03"), y = p90_global,
-               label = "90%", hjust = 0, vjust = -0.5, size = 3, color = "gray40") +
-      annotate("text", x = as.Date("2024-01-03"), y = p97_global,
-               label = "97%", hjust = 0, vjust = -0.5, size = 3, color = "gray40") +
-      annotate("text", x = as.Date("2024-01-03"), y = p50_global,
-               label = "50%", hjust = 0, vjust =-0.5, size = 3, color = "gray40") +
-      annotate("text", x = as.Date("2024-01-03"), y = p25_global,
-               label = "25%", hjust = 0, vjust = -0.5, size = 3, color = "gray40") +
-      scale_x_date(date_labels = "%b-%d", date_breaks = "1 month",expand = expansion(mult = c(0, 0))) +
-      # scale_fill_manual("Daily %tile Range",
-      #                   values = c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2", 
-      #                              "90–97%" = "#ffcc80", "97–100%" = "#ff9933")) +
-      scale_fill_manual("Daily %tile Range",
-                        values = fill_values) +
-      scale_color_manual(name = NULL,
-                         values = setNames(c("blue", "orangered"), c("Mean", paste0(input$plot_year, " Observed")))) +
+                  aes(x = month_day, ymin = ymin, ymax = ymax, fill = range), alpha = 0.7)
+    
+    if (isTruthy(input$show_hist_years)) {
+      p <- p + geom_line(
+        data = df_hist_all,
+        aes(x = month_day, y = value, group = year_str, color = year_str, text = text),
+        linewidth = 0.5, alpha = 0.4
+      )
+    }
+    
+    p <- p +
+      geom_line(data = clim_df,
+                aes(x = month_day, y = mean, group = 1, color = "Mean", text = text),
+                linewidth = 0.75) +
+      geom_line(data = df_current,
+                aes(x = month_day, y = value, group = 1, color = paste0(input$plot_year, " Observed"), text = text),
+                linewidth = 1) +
+      geom_hline(yintercept = quantile(df_hist_all$value, c(0.25, 0.5, 0.9, 0.97), na.rm = TRUE),
+                 linetype = "dashed", color = "gray40") +
+      scale_x_date(date_labels = "%b-%d", date_breaks = "1 month", expand = expansion(mult = c(0, 0))) +
+      scale_fill_manual("Daily %tile Range", values = fill_values) +
+      scale_color_manual("Legend", values = color_values) +
       labs(
         title = paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")"),
-        subtitle = paste0(station_label, " | ", input$plot_year,
-                          " vs Climatology (", historical_years$start_year, "–", historical_years$end_year, ")"),
+        subtitle = paste0("Station(s): ", paste(selected_stations(), collapse = ", "), " | Year: ", input$plot_year),
         x = "Month-Day",
         y = paste(pretty_variable_name(input$variable), "(", input$daily_stat, ")"),
         caption = paste0("Data from FEMS | Updated through ", Sys.Date())
       ) +
       theme_bw(base_size = 14)
     
-    ggplotly(p, tooltip = "text")
+    # ggplotly(p, tooltip = "text") %>%
+    #   layout(legend = list(title = list(text = "Daily Values")))
+    
+    ggplotly(p, tooltip = "text") %>%
+      layout(
+        title = list(font = list(size = 14)),
+        xaxis = list(
+          title = list(font = list(size = 12)),
+          tickfont = list(size = 11)
+        ),
+        yaxis = list(
+          title = list(font = list(size = 12)),
+          tickfont = list(size = 11)
+        ),
+        legend = list(
+          #title = list(text = "Daily Values"),
+          title = list(text = "<span style='font-size:10pt;'>Daily Values</span>"),
+          font = list(size = 10)
+        )
+      )
+    
     
   })
+  
+  ####
   
 }
 
