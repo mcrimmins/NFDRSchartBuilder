@@ -14,11 +14,30 @@ library(tibble)
 library(bslib)
 library(plotly)
 library(RColorBrewer)
+library(DT)
+library(rlang)
 
 # -----------------------------
 # Helper Functions
 # -----------------------------
 #####
+
+# Safe summary function to avoid warnings
+safe_summary1 <- function(x, fun) {
+  if (all(is.na(x))) NA else fun(x, na.rm = TRUE)
+}
+# safe_summary <- function(x, fun) {
+#   fun <- rlang::as_function(fun)  # Ensures anonymous/lambda support
+#   if (all(is.na(x))) return(NA)
+#   
+#   # Check if the function has a formal argument named 'na.rm'
+#   if ("na.rm" %in% names(formals(fun))) {
+#     fun(x, na.rm = TRUE)
+#   } else {
+#     fun(x)
+#   }
+# }
+
 # updated download_nfdrs_data function with dynamic timezone
 
 download_nfdrs_data <- function(station_id, start_date, end_date,
@@ -67,6 +86,98 @@ download_nfdrs_data <- function(station_id, start_date, end_date,
 
 #####
 
+#####
+# weather download function
+
+download_weather_data <- function(station_id, start_date, end_date) {
+  local_tz <- station_metadata %>%
+    filter(station_id == !!station_id) %>%
+    pull(tz) %>%
+    unique()
+  
+  if (length(local_tz) == 0 || is.na(local_tz)) {
+    warning(paste("Timezone not found for station", station_id, "- defaulting to UTC"))
+    local_tz <- "UTC"
+  }
+  
+  base_url <- "https://fems.fs2c.usda.gov/api/climatology/download-weather"
+  start_iso <- paste0(start_date, "T00:00:00Z")
+  end_iso <- paste0(end_date, "T23:59:59Z")
+  
+  query <- list(
+    stationIds = station_id,
+    startDate = start_iso,
+    endDate = end_iso,
+    dataFormat = "csv",
+    dataIncrement = "hourly",
+    dataset = "observation",
+    stationtypes = "RAWS(SATNFDRS)"
+  )
+  
+  url <- paste0(base_url, "?", paste0(names(query), "=", query, collapse = "&"))
+  message("Fetching weather data from: ", url)
+  
+  tryCatch({
+    df <- read.csv(url, stringsAsFactors = FALSE)
+    
+    # Clean up column names: remove units and spaces
+    #names(df) <- gsub("\\(.*?\\)", "", names(df))     # Remove units in parentheses
+    #names(df) <- gsub("[[:space:]]+", "", names(df))  # Remove whitespace
+    
+    # Rename columns to app-compatible format
+    df <- df %>%
+      rename(
+        station_id       = StationId,
+        observationTime  = DateTime,
+        temperature      = Temperature.F.,
+        relativeHumidity = RelativeHumidity...,
+        precipitation    = Precipitation.in.,
+        windSpeed        = WindSpeed.mph.,
+        windDirection    = WindAzimuth.degrees.,
+        gustSpeed        = GustSpeed.mph.,
+        gustDirection    = GustAzimuth.degrees.,
+        solarRadiation   = SolarRadiation.W.m2.
+      )
+    
+    
+    # Convert timestamps
+    df$observationTime_UTC <- as.POSIXct(df$observationTime, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC")
+    df$observationTime_local <- as.POSIXct(format(df$observationTime_UTC, tz = local_tz, usetz = FALSE), tz = local_tz)
+    df$date <- as.Date(df$observationTime_local)
+    df$hour <- as.integer(format(df$observationTime_local, "%H"))
+    
+    # Drop unused flag columns
+    df <- df %>% select(-starts_with("Tflag"), -starts_with("RHflag"), -starts_with("PCPflag"),
+                        -starts_with("WSflag"), -starts_with("WAflag"), -starts_with("SRflag"),
+                        -starts_with("GSflag"), -starts_with("GAflag"), -SnowFlag, -ObservationType)
+    
+    # add in VPD
+    # Convert temperature to Celsius
+    df$temp_c <- (df$temperature - 32) * 5 / 9
+    
+    # Calculate Vapor Pressure Deficit (VPD)
+    df$vpd <- with(df, {
+      es <- 0.6108 * exp((17.27 * temp_c) / (temp_c + 237.3))
+      (1 - relativeHumidity / 100) * es
+    })
+    
+    # Calculate hourly HDW using VPD in hPa and wind speed in m/s (inline conversion)
+    df$hdw<- (df$windSpeed * 0.44704) * (df$vpd*10)
+    
+    # Optional: remove intermediate temp_c if not needed
+    df <- df %>% select(-temp_c)
+    
+    
+    return(df)
+  }, error = function(e) {
+    warning("Weather data parse failed: ", conditionMessage(e))
+    return(NULL)
+  })
+}
+
+
+#####
+
 pretty_variable_name <- function(var) {
   gsub("([a-z])([A-Z])", "\\1 \\2", var) |>
     tools::toTitleCase()
@@ -78,7 +189,8 @@ reverse_fill_vars <- c(
   "hundredHR_TL_FuelMoisture",
   "thousandHR_TL_FuelMoisture",
   "woodyLFI_fuelMoisture",
-  "herbaceousLFI_fuelMoisture"
+  "herbaceousLFI_fuelMoisture",
+  "relativeHumidity"
 )
 
 
@@ -159,6 +271,7 @@ ui <- fluidPage(
                    checkboxInput("show_hist_years", "Show Historic Years", value = TRUE)
                  )
         ),
+        tabPanel("Summary Stats", DTOutput("summary_table")),
         tabPanel("About", 
                  div(style = "padding: 20px;",
                      h3("🔥 NFDRS Chart Builder"),
@@ -210,6 +323,7 @@ server <- function(input, output, session) {
   selected_stations <- reactiveVal(default_station_id)
   
   data_cache <- reactiveValues()
+  weather_data_cache <- reactiveValues()
   all_data_cache <- reactiveVal(NULL)
   
   output$station_selector <- renderUI({
@@ -314,22 +428,66 @@ server <- function(input, output, session) {
     req(length(stns) > 0)
     
     withProgress(message = "Downloading & assembling data...", {
-      all_data <- purrr::map_dfr(stns, function(id) {
-        cache_key <- paste(id, input$fuel_model, sep = "_")
-        if (!is.null(data_cache[[cache_key]])) {
-          data_cache[[cache_key]]
+      all_nfdrs <- map_dfr(stns, function(id) {
+        key <- paste(id, input$fuel_model, sep = "_")
+        if (!is.null(data_cache[[key]])) {
+          data_cache[[key]]
         } else {
           df <- download_nfdrs_data(id, "2000-01-01", Sys.Date(), input$fuel_model)
-          if (!is.null(df)) {
-            df$station_id <- id
-            data_cache[[cache_key]] <- df
+          
+          if (is.null(df)) {
+            showNotification(paste("Failed to fetch NFDRS data for station", id),
+                             type = "error", duration = 6)
+            return(tibble())  # Safely return empty data
           }
+          
+          df$station_id <- id
+          data_cache[[key]] <- df
           df
         }
       })
+      
+      # all_weather <- map_dfr(stns, function(id) {
+      #   if (!is.null(weather_data_cache[[id]])) {
+      #     weather_data_cache[[id]]
+      #   } else {
+      #     df <- download_weather_data(id, "2000-01-01", Sys.Date())
+      #     if (!is.null(df)) {
+      #       df$station_id <- id
+      #       weather_data_cache[[id]] <- df
+      #     }
+      #     df
+      #   }
+      # })
+      
+      all_weather <- map_dfr(stns, function(id) {
+        if (!is.null(weather_data_cache[[id]])) {
+          weather_data_cache[[id]]
+        } else {
+          df <- download_weather_data(id, "2000-01-01", Sys.Date())
+          
+          # 👉 Add this block to notify if download failed
+          if (is.null(df)) {
+            showNotification(paste("Failed to fetch weather data for station", id),
+                             type = "error", duration = 6)
+            return(tibble())  # Return empty tibble to avoid breaking map_dfr
+          }
+          
+          df$station_id <- id
+          weather_data_cache[[id]] <- df
+          df
+        }
+      })
+      
+      all_data<- left_join(
+        all_nfdrs, all_weather,
+        by = c("station_id", "observationTime_local", "date", "hour")
+      )
+      
       all_data_cache(all_data)
     })
   })
+  
   
   # Update variable selection once data is ready
   # output$variable_selector <- renderUI({
@@ -338,25 +496,48 @@ server <- function(input, output, session) {
   #   selectInput("variable", "Select Variable", choices = vars, selected = vars[1])
   # })
   
+  ##### var labels ----
+  nfdrs_labels <- c(
+    "Energy Release Component (ERC)" = "energyReleaseComponent",
+    "Burning Index (BI)"             = "burningIndex",
+    "Ignition Component (IC)"        = "ignitionComponent",
+    "Spread Component (SC)"          = "spreadComponent",
+    "Keetch-Byram Drought Index"     = "kbdi",
+    "1-hr Fuel Moisture"             = "oneHR_TL_FuelMoisture",
+    "10-hr Fuel Moisture"            = "tenHR_TL_FuelMoisture",
+    "100-hr Fuel Moisture"           = "hundredHR_TL_FuelMoisture",
+    "1000-hr Fuel Moisture"          = "thousandHR_TL_FuelMoisture",
+    "Live Woody Fuel Moisture"       = "woodyLFI_fuelMoisture",
+    "Live Herbaceous Fuel Moisture"  = "herbaceousLFI_fuelMoisture",
+    "Growing Season Index"           = "gsi"
+  )
+  
+  weather_var_labels <- c(
+    "Temperature (°F)" = "temperature",
+    "Relative Humidity (%)" = "relativeHumidity",
+    "Wind Speed (mph)" = "windSpeed",
+    "Wind Gust (mph)" = "gustSpeed",
+    "Wind Direction (°)" = "windDirection",
+    "Gust Direction (°)" = "gustDirection",
+    "Solar Radiation (W/m²)" = "solarRadiation",
+    "Hourly Precipitation (in)" = "precipitation",
+    "Vapor Pressure Deficit (kPa)" = "vpd",
+    "Hot-Dry-Windy Index" = "hdw"
+  )
+  
+  # for plotting
+  weather_vars <- unname(weather_var_labels)
+  
+  #####
+  
+  # Update variable selector based on available data
   output$variable_selector <- renderUI({
     req(all_data_cache())
     
-    variable_labels <- c(
-      "Energy Release Component (ERC)" = "energyReleaseComponent",
-      "Burning Index (BI)"             = "burningIndex",
-      "Ignition Component (IC)"        = "ignitionComponent",
-      "Spread Component (SC)"          = "spreadComponent",
-      "Keetch-Byram Drought Index"     = "kbdi",
-      "1-hr Fuel Moisture"             = "oneHR_TL_FuelMoisture",
-      "10-hr Fuel Moisture"            = "tenHR_TL_FuelMoisture",
-      "100-hr Fuel Moisture"           = "hundredHR_TL_FuelMoisture",
-      "1000-hr Fuel Moisture"          = "thousandHR_TL_FuelMoisture",
-      "Live Woody Fuel Moisture"       = "woodyLFI_fuelMoisture",
-      "Live Herbaceous Fuel Moisture"  = "herbaceousLFI_fuelMoisture"
-    )
-    
+    # Combine with your NFDRS variable labels
     available_vars <- names(all_data_cache())[sapply(all_data_cache(), is.numeric)]
-    display_vars <- variable_labels[variable_labels %in% available_vars]
+    display_vars <- c(nfdrs_labels, weather_var_labels)
+    display_vars <- display_vars[display_vars %in% available_vars]
     
     selectInput("variable", "Select Variable", choices = display_vars, selected = display_vars[1])
   })
@@ -370,7 +551,7 @@ server <- function(input, output, session) {
     summary_fun <- match.fun(input$daily_stat)
     stn_data <- all_data %>%
       group_by(station_id, date) %>%
-      summarise(value = summary_fun(.data[[input$variable]], na.rm = TRUE), .groups = "drop") %>%
+      summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
       mutate(year = as.integer(format(date, "%Y")),
              month_day = as.Date(format(date, "2024-%m-%d")))
     
@@ -466,7 +647,12 @@ server <- function(input, output, session) {
       scale_color_manual(name = NULL,
                          values = setNames(c("blue", "orangered"), c("Mean", paste0(input$plot_year, " Observed")))) +
       labs(
-        title = paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")"),
+        #title = paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")"),
+        title = if (input$variable %in% weather_vars) {
+          names(weather_var_labels)[match(input$variable, weather_var_labels)]
+        } else {
+          paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")")
+        },
         subtitle = paste0(station_label, " | ", input$plot_year,
                           " vs Climatology (", historical_years$start_year, "–", historical_years$end_year, ")"),
         x = "Month-Day",
@@ -489,7 +675,7 @@ server <- function(input, output, session) {
     
     stn_data <- all_data %>%
       group_by(station_id, date) %>%
-      summarise(value = summary_fun(.data[[input$variable]], na.rm = TRUE), .groups = "drop") %>%
+      summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
       mutate(
         year = as.integer(format(date, "%Y")),
         month_day = as.Date(format(date, "2024-%m-%d"))
@@ -613,7 +799,12 @@ server <- function(input, output, session) {
       scale_fill_manual("Daily %tile Range", values = fill_values) +
       scale_color_manual("Legend", values = color_values) +
       labs(
-        title = paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")"),
+        #title = paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")"),
+        title = if (input$variable %in% weather_vars) {
+          names(weather_var_labels)[match(input$variable, weather_var_labels)]
+        } else {
+          paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")")
+        },
         subtitle = paste0("Station(s): ", paste(selected_stations(), collapse = ", "), " | Year: ", input$plot_year),
         x = "Month-Day",
         y = paste(pretty_variable_name(input$variable), "(", input$daily_stat, ")"),
@@ -642,10 +833,84 @@ server <- function(input, output, session) {
         )
       )
     
-    
   })
   
-  ####
+  #####
+  
+  ##### add in summary datatable
+  
+  # Render summary table
+  output$summary_table <- renderDT({
+    req(all_data_cache())
+    data <- all_data_cache()
+    
+    # Filter to non-plot year
+    #df_hist <- data %>% filter(format(date, "%Y") != input$plot_year)
+    df_hist <- data
+    
+    # Variables to exclude from summary
+    exclude_vars <- c("stationId", "hour")
+    
+    # Numeric columns excluding unwanted ones
+    numeric_vars <- names(df_hist)[sapply(df_hist, is.numeric) & !(names(df_hist) %in% exclude_vars)]
+    
+    # Safe summary helper
+    safe_summary <- function(x, fun) {
+      fun <- rlang::as_function(fun)  # Ensures anonymous/lambda support
+      if (all(is.na(x))) return(NA)
+      
+      # Check if the function has a formal argument named 'na.rm'
+      if ("na.rm" %in% names(formals(fun))) {
+        fun(x, na.rm = TRUE)
+      } else {
+        fun(x)
+      }
+    }
+    
+    # Calculate summaries
+    summary_df <- map_dfr(numeric_vars, function(var) {
+      vec <- df_hist[[var]]
+      tibble(
+        Variable = var,
+        Min    = safe_summary(vec, ~ min(., na.rm = TRUE)),
+        Max    = safe_summary(vec, ~ max(., na.rm = TRUE)),
+        Mean   = safe_summary(vec, ~ mean(., na.rm = TRUE)),
+        Median = safe_summary(vec, ~ median(., na.rm = TRUE)),
+        Q25    = safe_summary(vec, ~ quantile(., 0.25, na.rm = TRUE)),
+        Q50    = safe_summary(vec, ~ quantile(., 0.50, na.rm = TRUE)),
+        Q75    = safe_summary(vec, ~ quantile(., 0.75, na.rm = TRUE)),
+        Q90    = safe_summary(vec, ~ quantile(., 0.90, na.rm = TRUE)),
+        Q97    = safe_summary(vec, ~ quantile(., 0.97, na.rm = TRUE))
+      )
+    })
+    
+    
+    # Map readable labels using nfdrs and weather label dictionaries
+    label_map <- c(nfdrs_labels, weather_var_labels)
+    summary_df$Variable <- ifelse(
+      summary_df$Variable %in% label_map,
+      names(label_map)[match(summary_df$Variable, label_map)],
+      summary_df$Variable
+    )
+    
+    # Round all numeric columns
+    summary_df[-1] <- lapply(summary_df[-1], function(x) round(x, 1))
+    
+    # Dynamic period title
+    years <- range(as.integer(format(df_hist$date, "%Y")), na.rm = TRUE)
+    
+    # Return datatable with styled caption
+    DT::datatable(
+      summary_df,
+      rownames = FALSE,
+      options = list(pageLength = 25, scrollX = TRUE, dom = 't'),
+      caption = htmltools::tags$caption(
+        style = 'caption-side: top; text-align: left; font-weight: bold;',
+        paste0("Summary Statistics (", years[1], "–", years[2], ")")
+      )
+    )
+  })
+  #####
   
 }
 
