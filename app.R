@@ -268,7 +268,7 @@ ui <- fluidPage(
                  div(
                    plotlyOutput("plotly_climatology_plot", height = "700px"),
                    br(),
-                   checkboxInput("show_hist_years", "Show Historic Years", value = TRUE)
+                   checkboxInput("show_hist_years", "Show Historic Years", value = FALSE)
                  )
         ),
         tabPanel("Summary Stats", DTOutput("summary_table")),
