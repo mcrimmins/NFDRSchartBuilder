@@ -77,6 +77,7 @@ download_nfdrs_data <- function(station_id, start_date, end_date,
     #df$date <- as.Date(df$observationTime_local)
     df$date <- as.Date(format(df$observationTime_local, tz = local_tz))
     df$hour <- as.integer(format(df$observationTime_local, "%H"))
+    df$station_id <- station_id # added station id back in 
     return(df)
   }, error = function(e) {
     warning("Failed to download or parse the data: ", conditionMessage(e))
@@ -123,11 +124,12 @@ download_weather_data <- function(station_id, start_date, end_date) {
     # Clean up column names: remove units and spaces
     #names(df) <- gsub("\\(.*?\\)", "", names(df))     # Remove units in parentheses
     #names(df) <- gsub("[[:space:]]+", "", names(df))  # Remove whitespace
+    df$station_id <- station_id # added station id back in 
     
     # Rename columns to app-compatible format
     df <- df %>%
       rename(
-        station_id       = StationId,
+        #station_id       = StationId,
         observationTime  = DateTime,
         temperature      = Temperature.F.,
         relativeHumidity = RelativeHumidity...,
