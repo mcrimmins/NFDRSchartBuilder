@@ -58,6 +58,7 @@ download_nfdrs_data <- function(station_id, start_date, end_date,
     #df$date <- as.Date(df$observationTime_local)
     df$date <- as.Date(format(df$observationTime_local, tz = local_tz))
     df$hour <- as.integer(format(df$observationTime_local, "%H"))
+    df$station_id <- station_id # added station id back in
     return(df)
   }, error = function(e) {
     warning("Failed to download or parse the data: ", conditionMessage(e))
