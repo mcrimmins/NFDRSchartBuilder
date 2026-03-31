@@ -1,8 +1,20 @@
-# NFDRS Chart Builder App
-# MAC 04/15/25
-
-# update metadata file from https://www.wildfire.gov/node/3473 or
-# https://fems.fs2c.usda.gov/download
+# ==============================================================================
+# Application: NFDRS Chart Builder App ----  DEVELOPMENT VERSION
+# Author: Mike Crimmins (crimmins@arizona.edu) / Gemini Pro
+# Date: April 2025
+# Description: An interactive R/Shiny application for visualizing daily fire 
+#              weather indices, meteorological variables, and percentile 
+#              climatologies from the National Fire Danger Rating System (NFDRS).
+#              Includes tools for both historical baseline comparisons and 
+#              Year-to-Date (YTD) anomaly tracking.
+#
+# Data Sources:
+#   - API endpoints: https://fems.fs2c.usda.gov/api/
+#   - Metadata updates: https://www.wildfire.gov/node/3473 or
+#                       https://fems.fs2c.usda.gov/download
+# 
+# Organization: University of Arizona (https://cales.arizona.edu/climate/)
+# ==============================================================================
 
 library(shiny)
 library(leaflet)
@@ -31,8 +43,6 @@ safe_summary1 <- function(x, fun) {
 }
 
 ##### API downloads -----
-# new API download function - updated 3/30/26 to handle new API structure,
-# timestamp formats, add error handling, dynamic time parsing, and FORECASTS
 download_nfdrs_data <- function(station_id, start_date, end_date,
                                 fuel_model = "Y", dataset = "all") {
   
@@ -56,13 +66,11 @@ download_nfdrs_data <- function(station_id, start_date, end_date,
     res <- httr::GET(url)
     httr::stop_for_status(res)
     
-    # Fix: Wrap the content in I() to satisfy newer versions of readr
     raw_text <- httr::content(res, "text", encoding = "UTF-8")
     df <- readr::read_csv(I(raw_text), show_col_types = FALSE)
     
     if(nrow(df) == 0) return(NULL)
     
-    # Fix: Dynamically find the time column, ignoring case sensitivity
     time_col_idx <- grep("observation_time_lst|observationtime|datetime", names(df), ignore.case = TRUE)
     if (length(time_col_idx) == 0) {
       stop("No valid time column found. API returned: ", paste(names(df), collapse = ", "))
@@ -137,7 +145,6 @@ download_weather_data <- function(station_id, start_date, end_date) {
     res <- httr::GET(url)
     httr::stop_for_status(res)
     
-    # Fix: Wrap the content in I()
     raw_text <- httr::content(res, "text", encoding = "UTF-8")
     df <- readr::read_csv(I(raw_text), show_col_types = FALSE)
     
@@ -212,7 +219,6 @@ reverse_fill_vars <- c(
 # -----------------------------
 # Load Station Metadata
 # -----------------------------
-# Make sure your CSV file is in the same directory
 station_metadata <- read.csv("station_metadata_FEMS3_042225.csv", stringsAsFactors = FALSE)
 
 # -----------------------------
@@ -229,18 +235,23 @@ ui <- fluidPage(
         gtag('config', 'G-JJ5NSHGJE6');
       </script>
     "),
-    
-    # NEW: Custom CSS to make the validation messages large, centered, and gray
     tags$style(HTML("
       .shiny-output-error-validation {
-        color: #6c757d;           /* A nice bootstrap gray instead of red */
-        font-size: 24px;          /* Make the text much larger */
-        text-align: center;       /* Center it horizontally */
-        margin-top: 150px;        /* Push it down into the middle of the chart area */
-        font-weight: 500;         /* Make it slightly bold */
+        color: #6c757d; font-size: 24px; text-align: center; margin-top: 150px; font-weight: 500;
+      }
+      /* Optional pulsing animation for the warning button */
+      @keyframes pulse {
+        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(217, 83, 79, 0.7); }
+        70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(217, 83, 79, 0); }
+        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(217, 83, 79, 0); }
+      }
+      .btn-warning-pulse {
+        animation: pulse 2s infinite;
+        background-color: #d9534f !important;
+        border-color: #d43f3a !important;
+        color: white !important;
       }
     "))
-    
   ),
   theme = bs_theme(bootswatch = "journal"),
   tags$div(
@@ -259,11 +270,11 @@ ui <- fluidPage(
                    value = as.numeric(format(Sys.Date(), "%Y")),
                    min = 2005, max = as.numeric(format(Sys.Date(), "%Y"))),
       
-      # NEW: Action button and Forecast Toggle
       br(),
-      actionButton("fetch_data", "Fetch Station Data", class = "btn-primary", width = "100%", style = "font-weight: bold;"),
-      br(), br(),
-      checkboxInput("show_forecast", "Plot Forecasts (Dashed Line)", value = TRUE),
+      # dynamic UI for the fetch button
+      uiOutput("dynamic_fetch_button"),
+      br(), 
+      checkboxInput("show_forecast", "Plot Forecasts (Solid Line)", value = TRUE),
       br(),
       
       div(
@@ -274,6 +285,9 @@ ui <- fluidPage(
       )
     ),
     mainPanel(
+      # High-visibility warning banner
+      uiOutput("stale_data_banner"),
+      
       tabsetPanel(
         tabPanel("Static Plot", plotOutput("climatology_plot", height = "700px")),
         tabPanel("Interactive Plot",
@@ -283,27 +297,21 @@ ui <- fluidPage(
                    checkboxInput("show_hist_years", "Show Historic Years", value = FALSE)
                  )
         ),
-        tabPanel("Summary Stats", DTOutput("summary_table")),
+        tabPanel("YTD Summary", DTOutput("summary_table")),
         tabPanel("About", 
                  div(style = "padding: 20px;",
                      h3("🔥 NFDRS Chart Builder"),
-                     p("The NFDRS Chart Builder is an interactive tool for visualizing daily fire weather indices and percentile climatologies from the National Fire Danger Rating System (NFDRS)."),
-                     p("Users can explore historical patterns and current and past year observations of key fire weather indices across selected stations and fuel models."),
+                     p("The NFDRS Chart Builder is an interactive tool for visualizing daily fire weather indices, meteorological variables, and percentile climatologies from the National Fire Danger Rating System (NFDRS)."),
                      h4("🛠️ How to Use"),
                      tags$ol(
                        tags$li("Use the map or dropdown to select one or more stations (select/deselect stations using map or dropdown)."),
-                       tags$li("Select a fuel model available through FEMS (V,W,X,Y,Z)."),
-                       tags$li("Choose a variable such as ERC, BI, IC, SC, or KBDI."),
+                       tags$li("Select a fuel model available through FEMS (Y or Z)."),
+                       tags$li("Choose a variable to analyze. Options dynamically update based on the fetched data and include NFDRS indices (e.g., ERC, BI, KBDI, Fuel Moistures) as well as weather variables (e.g., Temperature, RH, Wind Speed, VPD, HDW)."),
                        tags$li("Pick a daily summary statistic (mean, min, or max) and a target year."),
-                       tags$li("Click 'Fetch Station Data' to download from the API."),
-                       tags$li("View results in either a static or interactive plot tab.")
-                     ),
-                     h4("🔍 Features"),
-                     tags$ul(
-                       tags$li("Select one or more stations to create daily composites (SIGs)"),
-                       tags$li("Daily summaries of hourly data using min, max or mean values"),
-                       tags$li("7-day FEMS API Forecast Integration"),
-                       tags$li("Interactive map with zoom, pan and snap capabilities")
+                       tags$li("Click 'Fetch Station Data' to download from the API. ", 
+                               tags$b("Note: "), "If you change your station or fuel model later, the button will turn red and warn you to fetch the newly requested data to keep the charts accurate."),
+                       tags$li("View visualizations in either the static or interactive plot tabs, or check the ", 
+                               tags$b("Summary Stats"), " tab for a Year-to-Date (YTD) anomaly table comparing the current year to the historical baseline (2005–2022).")
                      )
                  )
         )
@@ -324,6 +332,39 @@ server <- function(input, output, session) {
   weather_data_cache <- reactiveValues()
   all_data_cache <- reactiveVal(NULL)
   
+  # NEW: We track what was ACTUALLY fetched to keep plot titles honest
+  fetched_fuel_model <- reactiveVal(NULL) 
+  data_outdated <- reactiveVal(FALSE) 
+  
+  # Trigger warning if they change inputs that require a fetch
+  observeEvent(c(input$station_ids, input$fuel_model), {
+    if (!is.null(all_data_cache())) {
+      data_outdated(TRUE)
+    }
+  }, ignoreInit = TRUE)
+  
+  # Dynamic Fetch Button Rendering
+  output$dynamic_fetch_button <- renderUI({
+    if (data_outdated()) {
+      actionButton("fetch_data", "⚠️ FETCH NEW DATA", 
+                   class = "btn-warning-pulse", width = "100%", 
+                   style = "font-weight: bold; font-size: 16px; padding: 12px;")
+    } else {
+      actionButton("fetch_data", "Fetch Station Data", 
+                   class = "btn-primary", width = "100%", 
+                   style = "font-weight: bold;")
+    }
+  })
+  
+  # Highly visible alert banner above the charts
+  output$stale_data_banner <- renderUI({
+    if (data_outdated()) {
+      div(class = "alert alert-warning", 
+          style = "font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 15px;",
+          "⚠️ Station selection or Fuel Model has changed. The charts below are showing old data. Click 'Fetch New Data' to update.")
+    }
+  })
+  
   output$station_selector <- renderUI({
     selectInput("station_ids", "Selected Stations",
                 choices = setNames(station_metadata$station_id, station_metadata$station_name),
@@ -337,27 +378,20 @@ server <- function(input, output, session) {
         lng = ~longitude, lat = ~latitude,
         layerId = ~station_id,
         label = ~station_name,
-        radius = 5,
-        color = "blue",
-        fillOpacity = 0.5
+        radius = 5, color = "blue", fillOpacity = 0.5
       )
   })
   
   observeEvent(input$station_map_marker_click, {
     click_id <- input$station_map_marker_click$id
     current <- selected_stations()
-    new_selection <- if (click_id %in% current) {
-      setdiff(current, click_id)
-    } else {
-      c(current, click_id)
-    }
+    new_selection <- if (click_id %in% current) setdiff(current, click_id) else c(current, click_id)
     selected_stations(new_selection)
     updateSelectInput(session, "station_ids", selected = new_selection)
   })
   
   observeEvent(input$station_ids, {
     selected_stations(input$station_ids)
-    
     sel_data <- station_metadata %>% filter(station_id %in% input$station_ids)
     
     leafletProxy("station_map") %>%
@@ -365,28 +399,18 @@ server <- function(input, output, session) {
       addCircleMarkers(
         data = station_metadata,
         lng = ~longitude, lat = ~latitude,
-        layerId = ~station_id,
-        label = ~station_name,
-        radius = 5,
-        color = ~ifelse(station_id %in% input$station_ids, "red", "blue"),
+        layerId = ~station_id, label = ~station_name,
+        radius = 5, color = ~ifelse(station_id %in% input$station_ids, "red", "blue"),
         fillOpacity = 0.5
       )
     
     if (nrow(sel_data) == 1) {
-      leafletProxy("station_map") %>%
-        setView(lng = sel_data$longitude, lat = sel_data$latitude, zoom = 7)
+      leafletProxy("station_map") %>% setView(lng = sel_data$longitude, lat = sel_data$latitude, zoom = 7)
     } else if (nrow(sel_data) > 1) {
-      leafletProxy("station_map") %>%
-        fitBounds(
-          lng1 = min(sel_data$longitude),
-          lat1 = min(sel_data$latitude),
-          lng2 = max(sel_data$longitude),
-          lat2 = max(sel_data$latitude)
-        )
+      leafletProxy("station_map") %>% fitBounds(min(sel_data$longitude), min(sel_data$latitude), max(sel_data$longitude), max(sel_data$latitude))
     }
   })
   
-  # Trigger download ONLY when the Fetch button is clicked
   observeEvent(input$fetch_data, {
     req(input$fuel_model)
     stns <- selected_stations()
@@ -424,50 +448,33 @@ server <- function(input, output, session) {
         }
       })
       
-      # Ensure neither download failed completely before joining
       if (nrow(all_nfdrs) == 0 || nrow(all_weather) == 0) {
         showNotification("One or more datasets returned empty. Cannot process station.", type = "error")
         return(NULL)
       }
       
-      # Join dynamically using record_type to avoid Obs/Fcst duplication issues
-      all_data <- left_join(
-        all_nfdrs, all_weather,
-        by = c("station_id", "date", "hour", "record_type")
-      )
+      all_data <- left_join(all_nfdrs, all_weather, by = c("station_id", "date", "hour", "record_type"))
       
+      # SUCCESS: Save data, lock in the fuel model, and clear the warning
       all_data_cache(all_data)
+      fetched_fuel_model(input$fuel_model)
+      data_outdated(FALSE) 
     })
   })
   
   ##### var labels ----
-  nfdrs_labels <- c(
-    "Energy Release Component (ERC)" = "energyReleaseComponent",
-    "Burning Index (BI)"             = "burningIndex",
-    "Ignition Component (IC)"        = "ignitionComponent",
-    "Spread Component (SC)"          = "spreadComponent",
-    "Keetch-Byram Drought Index"     = "kbdi",
-    "1-hr Fuel Moisture"             = "oneHR_TL_FuelMoisture",
-    "10-hr Fuel Moisture"            = "tenHR_TL_FuelMoisture",
-    "100-hr Fuel Moisture"           = "hundredHR_TL_FuelMoisture",
-    "1000-hr Fuel Moisture"          = "thousandHR_TL_FuelMoisture",
-    "Live Woody Fuel Moisture"       = "woodyLFI_fuelMoisture",
-    "Live Herbaceous Fuel Moisture"  = "herbaceousLFI_fuelMoisture",
-    "Growing Season Index"           = "gsi"
-  )
+  nfdrs_labels <- c("Energy Release Component (ERC)" = "energyReleaseComponent", "Burning Index (BI)" = "burningIndex",
+                    "Ignition Component (IC)" = "ignitionComponent", "Spread Component (SC)" = "spreadComponent",
+                    "Keetch-Byram Drought Index" = "kbdi", "1-hr Fuel Moisture" = "oneHR_TL_FuelMoisture",
+                    "10-hr Fuel Moisture" = "tenHR_TL_FuelMoisture", "100-hr Fuel Moisture" = "hundredHR_TL_FuelMoisture",
+                    "1000-hr Fuel Moisture" = "thousandHR_TL_FuelMoisture", "Live Woody Fuel Moisture" = "woodyLFI_fuelMoisture",
+                    "Live Herbaceous Fuel Moisture" = "herbaceousLFI_fuelMoisture", "Growing Season Index" = "gsi")
   
-  weather_var_labels <- c(
-    "Temperature (°F)" = "temperature",
-    "Relative Humidity (%)" = "relativeHumidity",
-    "Wind Speed (mph)" = "windSpeed",
-    "Wind Gust (mph)" = "gustSpeed",
-    "Wind Direction (°)" = "windDirection",
-    "Gust Direction (°)" = "gustDirection",
-    "Solar Radiation (W/m²)" = "solarRadiation",
-    "Hourly Precipitation (in)" = "precipitation",
-    "Vapor Pressure Deficit (kPa)" = "vpd",
-    "Hot-Dry-Windy Index" = "hdw"
-  )
+  weather_var_labels <- c("Temperature (°F)" = "temperature", "Relative Humidity (%)" = "relativeHumidity",
+                          "Wind Speed (mph)" = "windSpeed", "Wind Gust (mph)" = "gustSpeed",
+                          "Wind Direction (°)" = "windDirection", "Gust Direction (°)" = "gustDirection",
+                          "Solar Radiation (W/m²)" = "solarRadiation", "Hourly Precipitation (in)" = "precipitation",
+                          "Vapor Pressure Deficit (kPa)" = "vpd", "Hot-Dry-Windy Index" = "hdw")
   
   weather_vars <- unname(weather_var_labels)
   
@@ -476,39 +483,36 @@ server <- function(input, output, session) {
     available_vars <- names(all_data_cache())[sapply(all_data_cache(), is.numeric)]
     display_vars <- c(nfdrs_labels, weather_var_labels)
     display_vars <- display_vars[display_vars %in% available_vars]
-    
     selectInput("variable", "Select Variable", choices = display_vars, selected = display_vars[1])
   })
   
   # Plot rendering
   output$climatology_plot <- renderPlot({
-    #req(all_data_cache(), input$variable, input$daily_stat, input$plot_year)
-    # NEW: Friendly UI message when data is missing
-    validate(
-      need(!is.null(all_data_cache()), "Welcome! Please select your station(s) and click 'Fetch Station Data' to generate the chart.")
-    )
-    req(input$variable, input$daily_stat, input$plot_year)
-    
+    validate(need(!is.null(all_data_cache()), "Welcome! Please select your station(s) and click 'Fetch Station Data' to generate the chart."))
+    req(input$variable, input$daily_stat, input$plot_year, fetched_fuel_model())
     
     all_data <- all_data_cache()
-    
     summary_fun <- match.fun(input$daily_stat)
     
-    # Process base stn data (Keep record_type intact for splitting later)
+    # -------------------------------------------------------------
+    # NEW FIX: Extract names safely from downloaded data, NOT UI inputs
+    # -------------------------------------------------------------
+    plotted_station_ids <- unique(all_data$station_id)
+    station_names <- station_metadata %>%
+      filter(station_id %in% plotted_station_ids) %>%
+      pull(station_name) %>% unique()
+    station_label <- paste(station_names, collapse = ", ")
+    
     stn_data <- all_data %>%
       group_by(station_id, date, record_type) %>%
       summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
-      mutate(year = as.integer(format(date, "%Y")),
-             month_day = as.Date(format(date, "2024-%m-%d")))
+      mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
     
-    # Average across stations for each day & record_type
     all_data_sig <- stn_data %>%
       group_by(date, record_type) %>%
       summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
-      mutate(year = as.integer(format(date, "%Y")),
-             month_day = as.Date(format(date, "2024-%m-%d")))
+      mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
     
-    # HISTORICAL DATA: ONLY use Observations (O), never Forecasts (F)
     all_data_hist <- all_data_sig %>% filter(record_type == "O")
     
     historical_years <- all_data_hist %>% filter(year >= 2005 & year <= 2022) %>%
@@ -516,10 +520,8 @@ server <- function(input, output, session) {
     
     clim_df <- all_data_hist %>% filter(year != input$plot_year) %>%
       group_by(month_day) %>%
-      summarise(min = min(value, na.rm = TRUE),
-                max = max(value, na.rm = TRUE),
-                mean = mean(value, na.rm = TRUE),
-                median = median(value, na.rm = TRUE), .groups = "drop")
+      summarise(min = min(value, na.rm = TRUE), max = max(value, na.rm = TRUE),
+                mean = mean(value, na.rm = TRUE), median = median(value, na.rm = TRUE), .groups = "drop")
     
     df_hist <- all_data_hist %>% filter(year >= 2005 & year <= 2022)
     
@@ -530,53 +532,32 @@ server <- function(input, output, session) {
     
     ribbon_df <- df_hist %>%
       group_by(month_day) %>%
-      summarise(q0 = quantile(value, 0.00, na.rm = TRUE),
-                q33 = quantile(value, 0.33, na.rm = TRUE),
-                q66 = quantile(value, 0.66, na.rm = TRUE),
-                q90 = quantile(value, 0.90, na.rm = TRUE),
-                q97 = quantile(value, 0.97, na.rm = TRUE),
-                q100 = quantile(value, 1.00, na.rm = TRUE),
-                .groups = "drop")
+      summarise(q0 = quantile(value, 0.00, na.rm = TRUE), q33 = quantile(value, 0.33, na.rm = TRUE),
+                q66 = quantile(value, 0.66, na.rm = TRUE), q90 = quantile(value, 0.90, na.rm = TRUE),
+                q97 = quantile(value, 0.97, na.rm = TRUE), q100 = quantile(value, 1.00, na.rm = TRUE), .groups = "drop")
     
     ribbon_data <- tibble(
       range = c("0–33%", "33–66%", "66–90%", "90–97%", "97–100%"),
       ymin = c("q0", "q33", "q66", "q90", "q97"),
       ymax = c("q33", "q66", "q90", "q97", "q100")
     ) %>% pmap_dfr(function(range, ymin, ymax) {
-      ribbon_df %>% transmute(month_day,
-                              ymin = .data[[ymin]],
-                              ymax = .data[[ymax]],
-                              range = range)
+      ribbon_df %>% transmute(month_day, ymin = .data[[ymin]], ymax = .data[[ymax]], range = range)
     })
     
-    # SPLIT CURRENT YEAR INTO OBSERVED AND FORECAST
-    df_current_obs <- all_data_sig %>% 
-      filter(year == input$plot_year, record_type == "O") %>%
-      group_by(month_day) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+    df_current_obs <- all_data_sig %>% filter(year == input$plot_year, record_type == "O") %>%
+      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+    df_current_fcst <- all_data_sig %>% filter(year == input$plot_year, record_type == "F") %>%
+      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
     
-    df_current_fcst <- all_data_sig %>% 
-      filter(year == input$plot_year, record_type == "F") %>%
-      group_by(month_day) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
-    
-    station_names <- station_metadata %>%
-      filter(station_id %in% selected_stations()) %>%
-      pull(station_name) %>% unique()
-    station_label <- paste(station_names, collapse = ", ")
-    
-    default_fill <- c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2",
-                      "90–97%" = "#ffcc80", "97–100%" = "#ff9933")
-    moisture_fill <- c("0–33%" = "#ff9933", "33–66%" = "#ffcc80", "66–90%" = "#ffe0b2",
-                       "90–97%" = "#e6f2ff", "97–100%" = "#cce5ff")
+    default_fill <- c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2", "90–97%" = "#ffcc80", "97–100%" = "#ff9933")
+    moisture_fill <- c("0–33%" = "#ff9933", "33–66%" = "#ffcc80", "66–90%" = "#ffe0b2", "90–97%" = "#e6f2ff", "97–100%" = "#cce5ff")
     fill_values <- if (input$variable %in% reverse_fill_vars) moisture_fill else default_fill
     
     color_mapping <- setNames(c("blue", "orangered", "forestgreen"), 
                               c("Mean", paste0(input$plot_year, " Observed"), paste0(input$plot_year, " Forecast")))
     
     p <- ggplot() +
-      geom_ribbon(data = ribbon_data,
-                  aes(x = month_day, ymin = ymin, ymax = ymax, fill = range), alpha = 0.7) +
+      geom_ribbon(data = ribbon_data, aes(x = month_day, ymin = ymin, ymax = ymax, fill = range), alpha = 0.7) +
       geom_line(data = clim_df, aes(x = month_day, y = mean, color = "Mean"), linewidth = 0.6) +
       geom_hline(yintercept = c(p25_global, p50_global, p90_global, p97_global), color = "gray40", linetype = "dashed") +
       annotate("text", x = as.Date("2024-01-03"), y = p90_global, label = "90%", hjust = 0, vjust = -0.5, size = 3, color = "gray40") +
@@ -590,7 +571,8 @@ server <- function(input, output, session) {
         title = if (input$variable %in% weather_vars) {
           names(weather_var_labels)[match(input$variable, weather_var_labels)]
         } else {
-          paste0(pretty_variable_name(input$variable), " (Fuel Model ", input$fuel_model, ")")
+          # Use fetched_fuel_model() instead of input$fuel_model
+          paste0(pretty_variable_name(input$variable), " (Fuel Model ", fetched_fuel_model(), ")")
         },
         subtitle = paste0(station_label, " | ", input$plot_year,
                           " vs Climatology (", historical_years$start_year, "–", historical_years$end_year, ")"),
@@ -600,11 +582,9 @@ server <- function(input, output, session) {
       ) +
       theme_bw(base_size = 14)
     
-    # Plot observations
     if (nrow(df_current_obs) > 0) {
       p <- p + geom_line(data = df_current_obs, aes(x = month_day, y = value, color = paste0(input$plot_year, " Observed")), linewidth = 1.2)
     }
-    # Plot Forecasts if toggled
     if (input$show_forecast && nrow(df_current_fcst) > 0) {
       p <- p + geom_line(data = df_current_fcst, aes(x = month_day, y = value, color = paste0(input$plot_year, " Forecast")), linewidth = 1.2, linetype = "solid")
     }
@@ -614,16 +594,10 @@ server <- function(input, output, session) {
   
   ##### plotly version
   output$plotly_climatology_plot <- renderPlotly({
-    #req(all_data_cache(), input$variable, input$daily_stat, input$plot_year)
-    # NEW: Friendly UI message when data is missing
-    validate(
-      need(!is.null(all_data_cache()), "Welcome! Please select your station(s) and click 'Fetch Station Data' to generate the chart.")
-    )
-    req(input$variable, input$daily_stat, input$plot_year)
-    
+    validate(need(!is.null(all_data_cache()), "Welcome! Please select your station(s) and click 'Fetch Station Data' to generate the chart."))
+    req(input$variable, input$daily_stat, input$plot_year, fetched_fuel_model())
     
     all_data <- all_data_cache()
-    
     summary_fun <- match.fun(input$daily_stat)
     
     stn_data <- all_data %>%
@@ -638,44 +612,30 @@ server <- function(input, output, session) {
     
     all_data_hist <- all_data_sig %>% filter(record_type == "O")
     
-    df_hist_all <- all_data_hist %>%
-      filter(year != input$plot_year) %>%
-      mutate(year_str = as.character(year)) %>%
-      group_by(year_str, month_day) %>%
+    df_hist_all <- all_data_hist %>% filter(year != input$plot_year) %>%
+      mutate(year_str = as.character(year)) %>% group_by(year_str, month_day) %>%
       summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
       mutate(text = paste("Year:", year_str, "<br>Date:", format(month_day, "%b-%d"), "<br>Value:", round(value, 1)))
     
-    clim_df <- df_hist_all %>%
-      group_by(month_day) %>%
-      summarise(mean = mean(value, na.rm = TRUE), .groups = "drop") %>%
+    clim_df <- df_hist_all %>% group_by(month_day) %>% summarise(mean = mean(value, na.rm = TRUE), .groups = "drop") %>%
       mutate(text = paste("Date:", format(month_day, "%b-%d"), "<br>Mean:", round(mean, 1)))
     
-    # SPLIT CURRENT YEAR
-    df_current_obs <- all_data_sig %>%
-      filter(year == input$plot_year, record_type == "O") %>%
-      group_by(month_day) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+    df_current_obs <- all_data_sig %>% filter(year == input$plot_year, record_type == "O") %>%
+      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
       mutate(text = paste("Date:", format(month_day, "%b-%d"), "<br>Observed:", round(value, 1)))
     
-    df_current_fcst <- all_data_sig %>%
-      filter(year == input$plot_year, record_type == "F") %>%
-      group_by(month_day) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+    df_current_fcst <- all_data_sig %>% filter(year == input$plot_year, record_type == "F") %>%
+      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
       mutate(text = paste("Date:", format(month_day, "%b-%d"), "<br>Forecast:", round(value, 1)))
     
-    ribbon_df <- df_hist_all %>%
-      group_by(month_day) %>%
-      summarise(
-        q0 = quantile(value, 0.00, na.rm = TRUE), q33 = quantile(value, 0.33, na.rm = TRUE),
-        q66 = quantile(value, 0.66, na.rm = TRUE), q90 = quantile(value, 0.90, na.rm = TRUE),
-        q97 = quantile(value, 0.97, na.rm = TRUE), q100 = quantile(value, 1.00, na.rm = TRUE),
-        .groups = "drop"
-      )
+    ribbon_df <- df_hist_all %>% group_by(month_day) %>%
+      summarise(q0 = quantile(value, 0.00, na.rm = TRUE), q33 = quantile(value, 0.33, na.rm = TRUE),
+                q66 = quantile(value, 0.66, na.rm = TRUE), q90 = quantile(value, 0.90, na.rm = TRUE),
+                q97 = quantile(value, 0.97, na.rm = TRUE), q100 = quantile(value, 1.00, na.rm = TRUE), .groups = "drop")
     
     ribbon_data <- tibble(
       range = c("0–33%", "33–66%", "66–90%", "90–97%", "97–100%"),
-      ymin = c("q0", "q33", "q66", "q90", "q97"),
-      ymax = c("q33", "q66", "q90", "q97", "q100")
+      ymin = c("q0", "q33", "q66", "q90", "q97"), ymax = c("q33", "q66", "q90", "q97", "q100")
     ) %>% pmap_dfr(function(range, ymin, ymax) {
       ribbon_df %>% transmute(month_day, ymin = .data[[ymin]], ymax = .data[[ymax]], range = range)
     })
@@ -686,16 +646,11 @@ server <- function(input, output, session) {
     
     n_hist_years <- length(unique(df_hist_all$year_str))
     hist_colors <- colorRampPalette(brewer.pal(8, "Dark2"))(n_hist_years)
-    
     obsYr <- paste0(input$plot_year, " Observed")
     fcstYr <- paste0(input$plot_year, " Forecast")
     
-    color_values <- c(
-      setNames(hist_colors, unique(df_hist_all$year_str)),
-      "Mean" = "blue",
-      setNames("orangered", obsYr),
-      setNames("forestgreen", fcstYr)
-    )
+    color_values <- c(setNames(hist_colors, unique(df_hist_all$year_str)), "Mean" = "blue",
+                      setNames("orangered", obsYr), setNames("forestgreen", fcstYr))
     
     p <- ggplot() +
       geom_ribbon(data = ribbon_data, aes(x = month_day, ymin = ymin, ymax = ymax, fill = range), alpha = 0.7)
@@ -723,20 +678,78 @@ server <- function(input, output, session) {
     ggplotly(p, tooltip = "text") %>% layout(hovermode = "x unified")
   })
   
-  # Basic Summary Table 
   output$summary_table <- renderDT({
-    #req(all_data_cache(), input$variable, input$plot_year)
-    # NEW: Friendly UI message when data is missing
-    validate(
-      need(!is.null(all_data_cache()), "No data loaded yet. Click 'Fetch Station Data' to populate this table.")
-    )
-    req(input$variable, input$plot_year)
+    validate(need(!is.null(all_data_cache()), "No data loaded yet. Click 'Fetch Station Data' to populate this table."))
+    req(input$plot_year, input$daily_stat)
     
-    df <- all_data_cache() %>%
-      filter(year(date) == input$plot_year) %>%
-      select(date, hour, station_id, record_type, !!sym(input$variable)) %>%
-      arrange(desc(date), desc(hour))
-    datatable(df, options = list(pageLength = 10, scrollX = TRUE))
+    all_data <- all_data_cache()
+    summary_fun <- match.fun(input$daily_stat)
+    
+    # Create a master list of variables to process
+    var_list <- c(unname(nfdrs_labels), unname(weather_var_labels))
+    available_vars <- intersect(var_list, names(all_data))
+    
+    # 1. Filter to Observed data only
+    df_obs <- all_data %>% filter(record_type == "O")
+    
+    # 2. Determine the YTD cut-off based on the current plot year
+    df_current <- df_obs %>% filter(year(date) == input$plot_year)
+    
+    validate(need(nrow(df_current) > 0, paste("No observed data available for the year", input$plot_year)))
+    
+    max_date_current <- max(df_current$date, na.rm = TRUE)
+    cutoff_yday <- lubridate::yday(max_date_current)
+    
+    # 3. Aggregate hourly to daily values for ALL years, up to the cut-off day
+    daily_data <- df_obs %>%
+      mutate(yday = lubridate::yday(date), year = year(date)) %>%
+      filter(yday <= cutoff_yday) %>%
+      group_by(year, date) %>%
+      summarise(across(all_of(available_vars), ~safe_summary1(.x, summary_fun)), .groups = "drop")
+    
+    # 4. Calculate Historical Baseline (2005 - 2022)
+    baseline <- daily_data %>%
+      filter(year >= 2005 & year <= 2022) %>%
+      summarise(across(all_of(available_vars), ~mean(.x, na.rm = TRUE))) %>%
+      pivot_longer(everything(), names_to = "Variable", values_to = "Historical_Mean")
+    
+    # 5. Calculate Current Year YTD
+    current_ytd <- daily_data %>%
+      filter(year == input$plot_year) %>%
+      summarise(across(all_of(available_vars), ~mean(.x, na.rm = TRUE))) %>%
+      pivot_longer(everything(), names_to = "Variable", values_to = "Current_YTD")
+    
+    # 6. Combine, calculate anomalies, and format the table
+    table_data <- inner_join(baseline, current_ytd, by = "Variable") %>%
+      mutate(
+        Anomaly = Current_YTD - Historical_Mean,
+        `% of Normal` = (Current_YTD / Historical_Mean) * 100
+      ) %>%
+      # Prettify variable names using your existing helper function
+      mutate(Variable = sapply(Variable, pretty_variable_name)) %>%
+      # Round numeric columns for clean display
+      mutate(across(where(is.numeric), ~round(.x, 2))) %>%
+      rename(
+        `Historical Mean (2005-2022)` = Historical_Mean,
+        !!paste(input$plot_year, "YTD Mean") := Current_YTD
+      )
+    
+    # 7. Render with DT formatting
+    datatable(table_data, 
+              options = list(pageLength = 25, dom = 't', scrollX = TRUE), 
+              rownames = FALSE,
+              caption = htmltools::tags$caption(
+                style = 'caption-side: top; text-align: left; font-size: 16px; font-weight: bold; color: #333;',
+                paste("Year-to-Date Anomalies (Jan 1 -", format(max_date_current, "%b %d"), 
+                      ") based on Daily", tools::toTitleCase(input$daily_stat))
+              )) %>%
+      formatStyle(
+        'Anomaly',
+        # Simple color formatting: Red for positive anomalies, Blue for negative
+        color = styleInterval(0, c('blue', 'red')),
+        fontWeight = 'bold'
+      ) %>%
+      formatString('% of Normal', suffix = '%')
   })
   
 }
