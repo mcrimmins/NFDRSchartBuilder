@@ -265,7 +265,9 @@ ui <- fluidPage(
       uiOutput("station_selector"),
       selectInput("fuel_model", "Fuel Model", choices = c("Y","Z")),
       uiOutput("variable_selector"),
-      selectInput("daily_stat", "Daily Statistic", choices = c("mean", "min", "max")),
+      selectInput("daily_stat", "Daily Statistic", 
+                  choices = c("mean", "min", "max", "1300LST")),
+      
       numericInput("plot_year", "Plot Year (2005-Present)",
                    value = as.numeric(format(Sys.Date(), "%Y")),
                    min = 2005, max = as.numeric(format(Sys.Date(), "%Y"))),
@@ -274,7 +276,7 @@ ui <- fluidPage(
       # dynamic UI for the fetch button
       uiOutput("dynamic_fetch_button"),
       br(), 
-      checkboxInput("show_forecast", "Plot Forecasts (Solid Line)", value = TRUE),
+      checkboxInput("show_forecast", "Plot Current Forecast", value = TRUE),
       br(),
       
       div(
@@ -492,7 +494,7 @@ server <- function(input, output, session) {
     req(input$variable, input$daily_stat, input$plot_year, fetched_fuel_model())
     
     all_data <- all_data_cache()
-    summary_fun <- match.fun(input$daily_stat)
+    #summary_fun <- match.fun(input$daily_stat)
     
     # -------------------------------------------------------------
     # NEW FIX: Extract names safely from downloaded data, NOT UI inputs
@@ -503,11 +505,30 @@ server <- function(input, output, session) {
       pull(station_name) %>% unique()
     station_label <- paste(station_names, collapse = ", ")
     
-    stn_data <- all_data %>%
-      group_by(station_id, date, record_type) %>%
-      summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
-      mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+    # stn_data <- all_data %>%
+    #   group_by(station_id, date, record_type) %>%
+    #   summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
+    #   mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+
+    # -------------------------------------------------------------
+    # Aggregate data based on selected daily statistic
+    # -------------------------------------------------------------
+    if (input$daily_stat == "1300LST") {
+      stn_data <- all_data %>%
+        filter(hour == 13) %>% # Simply grab 13:00 for both Observed AND Forecast
+        group_by(station_id, date, record_type) %>%
+        # Use mean just to safely collapse single values
+        summarise(value = safe_summary1(.data[[input$variable]], mean), .groups = "drop") %>%
+        mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+    } else {
+      summary_fun <- match.fun(input$daily_stat)
+      stn_data <- all_data %>%
+        group_by(station_id, date, record_type) %>%
+        summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
+        mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+    }
     
+     
     all_data_sig <- stn_data %>%
       group_by(date, record_type) %>%
       summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
@@ -518,11 +539,17 @@ server <- function(input, output, session) {
     historical_years <- all_data_hist %>% filter(year >= 2005 & year <= 2022) %>%
       summarise(start_year = min(year, na.rm = TRUE), end_year = max(year, na.rm = TRUE))
     
-    clim_df <- all_data_hist %>% filter(year != input$plot_year) %>%
+    # clim_df <- all_data_hist %>% filter(year != input$plot_year) %>%
+    #   group_by(month_day) %>%
+    #   summarise(min = min(value, na.rm = TRUE), max = max(value, na.rm = TRUE),
+    #             mean = mean(value, na.rm = TRUE), median = median(value, na.rm = TRUE), .groups = "drop")
+    # NEW:
+    clim_df <- all_data_hist %>% filter(year >= 2005 & year <= 2022) %>%
       group_by(month_day) %>%
       summarise(min = min(value, na.rm = TRUE), max = max(value, na.rm = TRUE),
                 mean = mean(value, na.rm = TRUE), median = median(value, na.rm = TRUE), .groups = "drop")
     
+        
     df_hist <- all_data_hist %>% filter(year >= 2005 & year <= 2022)
     
     p90_global <- quantile(df_hist$value, 0.90, na.rm = TRUE)
@@ -598,12 +625,30 @@ server <- function(input, output, session) {
     req(input$variable, input$daily_stat, input$plot_year, fetched_fuel_model())
     
     all_data <- all_data_cache()
-    summary_fun <- match.fun(input$daily_stat)
+    #summary_fun <- match.fun(input$daily_stat)
     
-    stn_data <- all_data %>%
-      group_by(station_id, date, record_type) %>%
-      summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
-      mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+    # stn_data <- all_data %>%
+    #   group_by(station_id, date, record_type) %>%
+    #   summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
+    #   mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+
+    # -------------------------------------------------------------
+    # Aggregate data based on selected daily statistic
+    # -------------------------------------------------------------
+    if (input$daily_stat == "1300LST") {
+      stn_data <- all_data %>%
+        filter(hour == 13) %>% # Simply grab 13:00 for both Observed AND Forecast
+        group_by(station_id, date, record_type) %>%
+        # Use mean just to safely collapse single values
+        summarise(value = safe_summary1(.data[[input$variable]], mean), .groups = "drop") %>%
+        mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+    } else {
+      summary_fun <- match.fun(input$daily_stat)
+      stn_data <- all_data %>%
+        group_by(station_id, date, record_type) %>%
+        summarise(value = safe_summary1(.data[[input$variable]], summary_fun), .groups = "drop") %>%
+        mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+    }
     
     all_data_sig <- stn_data %>%
       group_by(date, record_type) %>%
@@ -612,7 +657,13 @@ server <- function(input, output, session) {
     
     all_data_hist <- all_data_sig %>% filter(record_type == "O")
     
-    df_hist_all <- all_data_hist %>% filter(year != input$plot_year) %>%
+    # df_hist_all <- all_data_hist %>% filter(year != input$plot_year) %>%
+    #   mutate(year_str = as.character(year)) %>% group_by(year_str, month_day) %>%
+    #   summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+    #   mutate(text = paste("Year:", year_str, "<br>Date:", format(month_day, "%b-%d"), "<br>Value:", round(value, 1)))
+    
+    # NEW:
+    df_hist_all <- all_data_hist %>% filter(year >= 2005 & year <= 2022) %>%
       mutate(year_str = as.character(year)) %>% group_by(year_str, month_day) %>%
       summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
       mutate(text = paste("Year:", year_str, "<br>Date:", format(month_day, "%b-%d"), "<br>Value:", round(value, 1)))
@@ -637,7 +688,13 @@ server <- function(input, output, session) {
       range = c("0–33%", "33–66%", "66–90%", "90–97%", "97–100%"),
       ymin = c("q0", "q33", "q66", "q90", "q97"), ymax = c("q33", "q66", "q90", "q97", "q100")
     ) %>% pmap_dfr(function(range, ymin, ymax) {
-      ribbon_df %>% transmute(month_day, ymin = .data[[ymin]], ymax = .data[[ymax]], range = range)
+      ribbon_df %>% transmute(
+        month_day, 
+        ymin = .data[[ymin]], 
+        ymax = .data[[ymax]], 
+        range = range,
+        text = paste0("Range: ", range, "<br>Bounds: ", round(.data[[ymin]], 1), " to ", round(.data[[ymax]], 1))
+      )
     })
     
     default_fill <- c("0–33%" = "#cce5ff", "33–66%" = "#e6f2ff", "66–90%" = "#ffe0b2", "90–97%" = "#ffcc80", "97–100%" = "#ff9933")
@@ -653,7 +710,7 @@ server <- function(input, output, session) {
                       setNames("orangered", obsYr), setNames("forestgreen", fcstYr))
     
     p <- ggplot() +
-      geom_ribbon(data = ribbon_data, aes(x = month_day, ymin = ymin, ymax = ymax, fill = range), alpha = 0.7)
+      geom_ribbon(data = ribbon_data, aes(x = month_day, ymin = ymin, ymax = ymax, fill = range, text = text, group = range), alpha = 0.7)
     
     if (isTruthy(input$show_hist_years)) {
       p <- p + geom_line(data = df_hist_all, aes(x = month_day, y = value, group = year_str, color = year_str, text = text), linewidth = 0.5, alpha = 0.4)
@@ -661,6 +718,7 @@ server <- function(input, output, session) {
     
     p <- p +
       geom_line(data = clim_df, aes(x = month_day, y = mean, group = 1, color = "Mean", text = text), linewidth = 0.75) +
+      #geom_line(data = clim_df, aes(x = month_day, y = mean, color = "Mean", text = text), linewidth = 0.75) +
       geom_hline(yintercept = quantile(df_hist_all$value, c(0.25, 0.5, 0.9, 0.97), na.rm = TRUE), linetype = "dashed", color = "gray40") +
       scale_x_date(date_labels = "%b-%d", date_breaks = "1 month", expand = expansion(mult = c(0, 0))) +
       scale_fill_manual("Daily %tile Range", values = fill_values) +
@@ -670,9 +728,11 @@ server <- function(input, output, session) {
     
     if (nrow(df_current_obs) > 0) {
       p <- p + geom_line(data = df_current_obs, aes(x = month_day, y = value, group = 1, color = !!obsYr, text = text), linewidth = 1)
+      #p <- p + geom_line(data = df_current_obs, aes(x = month_day, y = value, color = !!obsYr, text = text), linewidth = 1)
     }
     if (input$show_forecast && nrow(df_current_fcst) > 0) {
       p <- p + geom_line(data = df_current_fcst, aes(x = month_day, y = value, group = 1, color = !!fcstYr, text = text), linewidth = 1, linetype = "solid")
+      #p <- p + geom_line(data = df_current_fcst, aes(x = month_day, y = value, color = !!fcstYr, text = text), linewidth = 1, linetype = "solid")
     }
     
     ggplotly(p, tooltip = "text") %>% layout(hovermode = "x unified")
@@ -683,7 +743,8 @@ server <- function(input, output, session) {
     req(input$plot_year, input$daily_stat)
     
     all_data <- all_data_cache()
-    summary_fun <- match.fun(input$daily_stat)
+    
+    # Notice: summary_fun <- match.fun(input$daily_stat) has been REMOVED from here!
     
     # Create a master list of variables to process
     var_list <- c(unname(nfdrs_labels), unname(weather_var_labels))
@@ -701,11 +762,21 @@ server <- function(input, output, session) {
     cutoff_yday <- lubridate::yday(max_date_current)
     
     # 3. Aggregate hourly to daily values for ALL years, up to the cut-off day
-    daily_data <- df_obs %>%
-      mutate(yday = lubridate::yday(date), year = year(date)) %>%
-      filter(yday <= cutoff_yday) %>%
-      group_by(year, date) %>%
-      summarise(across(all_of(available_vars), ~safe_summary1(.x, summary_fun)), .groups = "drop")
+    if (input$daily_stat == "1300LST") {
+      daily_data <- df_obs %>%
+        mutate(yday = lubridate::yday(date), year = year(date)) %>%
+        filter(yday <= cutoff_yday, hour == 13) %>%
+        group_by(year, date) %>%
+        summarise(across(all_of(available_vars), ~safe_summary1(.x, mean)), .groups = "drop")
+    } else {
+      # It is safely placed inside the else block here instead!
+      summary_fun <- match.fun(input$daily_stat)
+      daily_data <- df_obs %>%
+        mutate(yday = lubridate::yday(date), year = year(date)) %>%
+        filter(yday <= cutoff_yday) %>%
+        group_by(year, date) %>%
+        summarise(across(all_of(available_vars), ~safe_summary1(.x, summary_fun)), .groups = "drop")
+    }
     
     # 4. Calculate Historical Baseline (2005 - 2022)
     baseline <- daily_data %>%
