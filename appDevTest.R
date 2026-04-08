@@ -258,18 +258,35 @@ ui <- fluidPage(
       }
     "))
   ),
-  theme = bs_theme(bootswatch = "journal"),
+  theme = bs_theme(bootswatch = "lumen"),
   tags$div(
     style = "display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;",
-    tags$h1("NFDRS Chart Builder"),
+    tags$h1("NFDRSv4 Chart Builder -- Experimental"),
     tags$img(src = "UAlogo.jpg", height = "60px") 
   ),
   sidebarLayout(
     sidebarPanel(
-      leafletOutput("station_map", height = 400),
+      # --- DATA FETCHING GROUP ---
+      leafletOutput("station_map", height = 300), # Reduced height to save vertical space
+      
       uiOutput("station_selector"),
+      div(style = "font-size: 0.85em; margin-top: -10px; margin-bottom: 15px; color: #555; line-height: 1.3;", 
+          "Click the map or dropdown to add/remove stations. ", tags$br(),
+          tags$b("Note:"), " Selecting multiple stations will aggregate their data into a single average."),
+      
       selectInput("fuel_model", "Fuel Model", choices = c("Y","Z")),
+      
+      # Fetch button moved directly below API parameters
+      uiOutput("dynamic_fetch_button"),
+      
+      # Visual separator
+      hr(style = "border-top: 2px solid #b0b0b0; margin-top: 25px; margin-bottom: 20px;"),
+      
+      # --- PLOT SETTINGS GROUP ---
+      h4("📈 Plot Settings", style = "margin-bottom: 15px; font-weight: bold; font-size: 1.1em; color: #444;"),
+      
       uiOutput("variable_selector"),
+      
       selectInput("daily_stat", "Daily Statistic", 
                   choices = c("mean", "min", "max", "1300LST")),
       
@@ -280,24 +297,30 @@ ui <- fluidPage(
                    value = as.numeric(format(Sys.Date(), "%Y")),
                    min = 2005, max = as.numeric(format(Sys.Date(), "%Y"))),
       
-      br(),
-      uiOutput("dynamic_fetch_button"),
-      br(), 
       checkboxInput("show_forecast", "Plot Current Forecast", value = TRUE),
-      br(),
       
+      hr(style = "margin-top: 20px; margin-bottom: 20px;"),
+      
+      # --- FOOTER ---
       div(
-        style = "text-align: center;",  
-        tags$img(src = "BP_app_logos.png", style = "width: 100%; height: auto;"),
-        tags$p("Contact: Mike Crimmins, crimmins@arizona.edu"),
-        tags$p("https://cales.arizona.edu/climate/")
+        style = "text-align: center; color: #666; font-size: 0.9em;",  
+        tags$img(src = "BP_app_logos.png", style = "width: 100%; height: auto; margin-bottom: 10px;"),
+        tags$p("Contact: Mike Crimmins, crimmins@arizona.edu", style = "margin-bottom: 2px;"),
+        tags$a(href="https://cales.arizona.edu/climate/", target="_blank", "https://cales.arizona.edu/climate/")
       )
     ),
     mainPanel(
       uiOutput("stale_data_banner"),
       
       tabsetPanel(
-        tabPanel("Static Plot", plotOutput("climatology_plot", height = "700px")),
+        #tabPanel("Static Plot", plotOutput("climatology_plot", height = "700px")),
+        tabPanel("Static Plot", 
+                 plotOutput("climatology_plot", height = "600px"),
+                 br(),
+                 div(style = "text-align: center; margin-top: 10px; margin-bottom: 20px;",
+                     downloadButton("download_plot_data", "Download Plot Data (CSV)", class = "btn-primary")
+                 )
+        ),
         tabPanel("Interactive Plot",
                  div(
                    plotlyOutput("plotly_climatology_plot", height = "700px"),
@@ -307,19 +330,44 @@ ui <- fluidPage(
         ),
         tabPanel("Summary Stats", DTOutput("summary_table")),
         tabPanel("About", 
-                 div(style = "padding: 20px;",
-                     h3("🔥 NFDRS Chart Builder"),
-                     p("The NFDRS Chart Builder is an interactive tool for visualizing daily fire weather indices, meteorological variables, and percentile climatologies from the National Fire Danger Rating System (NFDRS)."),
+                 div(style = "padding: 20px; max-width: 900px;",
+                     
+                     # Title with Dev Sandbox Tag
+                     h3("🔥 NFDRSv4 Chart Builder ", span(style='color:#d9534f; font-size:0.6em; font-weight:normal;', "(Dev Sandbox Version)")),
+                     p("The NFDRSv4 Chart Builder is an interactive tool for visualizing daily fire weather indices, meteorological variables, and percentile climatologies from the National Fire Danger Rating System (NFDRS)."),
+                     
+                     hr(style = "margin-top: 20px; margin-bottom: 20px;"),
+                     
                      h4("🛠️ How to Use"),
                      tags$ol(
                        tags$li("Use the map or dropdown to select one or more stations (select/deselect stations using map or dropdown)."),
                        tags$li("Select a fuel model available through FEMS (Y or Z)."),
                        tags$li("Choose a variable to analyze. Options dynamically update based on the fetched data and include NFDRS indices (e.g., ERC, BI, KBDI, Fuel Moistures) as well as weather variables (e.g., Temperature, RH, Wind Speed, VPD, HDW)."),
-                       tags$li("Pick a daily summary statistic (mean, min, or max) and a target year. ", tags$b("Note:"), " Certain variables like Precipitation and Burn Period automatically bypass this selection and compute daily totals."),
+                       tags$li("Pick a daily summary statistic (mean, min, or max) and a target year. ", tags$b("Note:"), " Certain computed variables like Precipitation and Burn Period automatically bypass this selection and compute daily totals/accumulations."),
+                       tags$li("Adjust the ", tags$b("Month Range Slider"), " to focus the plots and anomaly tables on a specific season (e.g., March to June)."),
                        tags$li("Click 'Fetch Station Data' to download from the API. ", 
                                tags$b("Note: "), "If you change your station or fuel model later, the button will turn red and warn you to fetch the newly requested data to keep the charts accurate."),
                        tags$li("View visualizations in either the static or interactive plot tabs, or check the ", 
-                               tags$b("Summary Stats"), " tab for an anomaly table comparing the current year to the historical baseline (2005–2022).")
+                               tags$b("Summary Stats"), " tab for an anomaly table comparing your selected period to the historical baseline.")
+                     ),
+                     
+                     hr(style = "margin-top: 20px; margin-bottom: 20px;"),
+                     
+                     h4("✨ What's New (Spring 2025)"),
+                     tags$ul(
+                       tags$li(tags$b("Computed Variables:"), " Added custom metrics including ", tags$i("Burn Period"), " (hours per day with RH < 20%) and ", tags$i("Cumulative Precipitation"), "."),
+                       tags$li(tags$b("Interactive Plotly Charts:"), " Hover over the new interactive plot tab to see exact values, historical percentiles, and spaghetti plots of individual past years."),
+                       tags$li(tags$b("Seasonal Filtering:"), " A new month-range slider allows you to crop plots and recalculate the Summary Stats table for targeted timeframes.")
+                     ),
+                     
+                     hr(style = "margin-top: 20px; margin-bottom: 20px;"),
+                     
+                     h4("📊 Data & Methodology"),
+                     p("All historical observation and forecast data is fetched directly from the ", 
+                       tags$a(href="https://fems.fs2c.usda.gov/api/", target="_blank", "USDA Forest Service FEMS API"), "."),
+                     tags$ul(
+                       tags$li(tags$b("Historical Baseline:"), " Percentile ribbons, dashed global thresholds, and normal averages are calculated using an 18-year baseline period from ", tags$b("2005 to 2022"), "."),
+                       tags$li(tags$b("Derived Metrics:"), " While standard NFDRS indices are calculated via FEMS, custom weather aggregates (like cumulative totals) are computed locally by this application from the raw hourly meteorological feeds.")
                      )
                  )
         )
@@ -370,9 +418,11 @@ server <- function(input, output, session) {
   })
   
   output$station_selector <- renderUI({
-    selectInput("station_ids", "Selected Stations",
-                choices = setNames(station_metadata$station_id, station_metadata$station_name),
-                selected = selected_stations(), multiple = TRUE)
+    selectizeInput("station_ids", "Selected Station(s)",
+                   choices = setNames(station_metadata$station_id, station_metadata$station_name),
+                   selected = selected_stations(), 
+                   multiple = TRUE,
+                   options = list(placeholder = "Click to select one or more..."))
   })
   
   output$station_map <- renderLeaflet({
@@ -843,6 +893,100 @@ server <- function(input, output, session) {
       formatString('% of Normal', suffix = '%')
   })
   
+  # ---------------------------------------------------------------------
+  # Download Handler for Plot Data
+  # ---------------------------------------------------------------------
+  output$download_plot_data <- downloadHandler(
+    filename = function() {
+      paste0("NFDRS_", input$variable, "_", input$daily_stat, "_", input$plot_year, ".csv")
+    },
+    content = function(file) {
+      # Require the data to be fetched first
+      req(all_data_cache(), input$variable, input$daily_stat, input$plot_year)
+      
+      all_data <- all_data_cache()
+      
+      # 1. Base Aggregation (Identical to plot logic)
+      stn_data <- all_data %>%
+        group_by(station_id, date, record_type) %>%
+        summarise(
+          value = if (input$variable %in% c("precip_total", "precip_cum")) {
+            safe_summary1(precipitation, sum)
+          } else if (input$variable == "burn_period") {
+            safe_summary1(relativeHumidity < 20, sum)
+          } else if (input$daily_stat == "1300LST") {
+            safe_summary1(.data[[input$variable]][hour == 13], mean)
+          } else {
+            safe_summary1(.data[[input$variable]], match.fun(input$daily_stat))
+          },
+          .groups = "drop"
+        ) %>%
+        mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
+      
+      # Cumulative step
+      if (input$variable == "precip_cum") {
+        stn_data <- stn_data %>%
+          arrange(date) %>%
+          group_by(station_id, year, record_type) %>%
+          mutate(value = cumsum(coalesce(value, 0))) %>%
+          ungroup()
+      }
+      
+      # Month filtering step
+      stn_data <- stn_data %>%
+        filter(lubridate::month(date) >= input$month_range[1] & lubridate::month(date) <= input$month_range[2])
+      
+      # Station averaging
+      all_data_sig <- stn_data %>%
+        group_by(month_day, year, record_type) %>%
+        summarise(value = mean(value, na.rm = TRUE), .groups = "drop") 
+      
+      # 2. Build the output columns
+      # Historical Data (2005-2022)
+      df_hist <- all_data_sig %>% 
+        filter(record_type == "O", year >= 2005, year <= 2022) %>%
+        group_by(month_day) %>%
+        summarise(
+          Historical_Mean = round(mean(value, na.rm = TRUE), 2),
+          Min_0 = round(quantile(value, 0.00, na.rm = TRUE), 2),
+          Pct_33 = round(quantile(value, 0.33, na.rm = TRUE), 2),
+          Pct_66 = round(quantile(value, 0.66, na.rm = TRUE), 2),
+          Pct_90 = round(quantile(value, 0.90, na.rm = TRUE), 2),
+          Pct_97 = round(quantile(value, 0.97, na.rm = TRUE), 2),
+          Max_100 = round(quantile(value, 1.00, na.rm = TRUE), 2),
+          .groups = "drop"
+        )
+      
+      # Current Year Observed
+      df_obs <- all_data_sig %>% 
+        filter(year == input$plot_year, record_type == "O") %>%
+        group_by(month_day) %>% 
+        summarise(Current_Observed = round(mean(value, na.rm = TRUE), 2), .groups = "drop")
+      
+      # Current Year Forecast
+      df_fcst <- all_data_sig %>% 
+        filter(year == input$plot_year, record_type == "F") %>%
+        group_by(month_day) %>% 
+        summarise(Current_Forecast = round(mean(value, na.rm = TRUE), 2), .groups = "drop")
+      
+      # 3. Merge together and format for export
+      final_data <- df_hist %>%
+        left_join(df_obs, by = "month_day") %>%
+        left_join(df_fcst, by = "month_day") %>%
+        mutate(Date = format(month_day, "%b-%d")) %>%
+        select(Date, Historical_Mean, Min_0, Pct_33, Pct_66, Pct_90, Pct_97, Max_100, Current_Observed, Current_Forecast)
+      
+      # Write the CSV
+      write.csv(final_data, file, row.names = FALSE, na = "")
+    }
+  )
+  
 }
 
-shinyApp(ui = ui, server = server)
+#shinyApp(ui = ui, server = server)
+
+# Change your bottom line from this:
+ shinyApp(ui = ui, server = server)
+
+# To this:
+#bslib::run_with_themer(shinyApp(ui = ui, server = server))
