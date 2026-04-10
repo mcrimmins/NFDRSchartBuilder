@@ -370,7 +370,29 @@ ui <- fluidPage(
                        tags$li(tags$b("Derived Metrics:"), " While standard NFDRS indices are calculated via FEMS, custom weather aggregates (like cumulative totals) are computed locally by this application from the raw hourly meteorological feeds.")
                      )
                  )
+        ),
+        
+        tabPanel("Submit Feedback", icon = icon("comment-dots"),
+                 div(style = "max-width: 800px; margin: 0 auto; padding-top: 30px;",
+                     
+                     h3("📝 App Feedback & Bug Reports", style = "text-align: center; color: #444;"),
+                     p("Please use the form below to share any issues you encounter, features you'd like to see, or general feedback about the NFDRSv4 Chart Builder.", 
+                       style = "text-align: center; color: #666; margin-bottom: 20px;"),
+                     
+                     # Paste the URL from your Google Form inside the quotes below!
+                     # Only copy the URL part (the part inside src="...") from the Google Embed code
+                     tags$iframe(
+                       src = Sys.getenv("FEEDBACK_FORM_URL"), 
+                       width = "100%", 
+                       height = "800px", 
+                       frameborder = "0", 
+                       marginheight = "0", 
+                       marginwidth = "0",
+                       style = "border: none; border-radius: 8px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1);"
+                     )
+                 )
         )
+        
       )
     )
   )
