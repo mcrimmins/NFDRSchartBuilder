@@ -1,7 +1,7 @@
 # ==============================================================================
 # Application: NFDRS Chart Builder App ----  DEVELOPMENT VERSION
 # Author: Mike Crimmins (crimmins@arizona.edu) / Gemini Pro
-# Date: April 2025
+# Date: April 2026
 # Description: An interactive R/Shiny application for visualizing daily fire 
 #              weather indices, meteorological variables, and percentile 
 #              climatologies from the National Fire Danger Rating System (NFDRS).
@@ -366,7 +366,7 @@ ui <- fluidPage(
                      p("All historical observation and forecast data is fetched directly from the ", 
                        tags$a(href="https://fems.fs2c.usda.gov/api/", target="_blank", "USDA Forest Service FEMS API"), "."),
                      tags$ul(
-                       tags$li(tags$b("Historical Baseline:"), " Percentile ribbons, dashed global thresholds, and normal averages are calculated using an 18-year baseline period from ", tags$b("2005 to 2022"), "."),
+                       tags$li(tags$b("Historical Baseline:"), " Percentile ribbons, dashed global thresholds, and normal averages are calculated using an 18-year baseline period from ", tags$b("2005 to 2025"), "."),
                        tags$li(tags$b("Derived Metrics:"), " While standard NFDRS indices are calculated via FEMS, custom weather aggregates (like cumulative totals) are computed locally by this application from the raw hourly meteorological feeds.")
                      )
                  )
@@ -620,15 +620,15 @@ server <- function(input, output, session) {
     
     all_data_hist <- all_data_sig %>% filter(record_type == "O")
     
-    historical_years <- all_data_hist %>% filter(year >= 2005 & year <= 2022) %>%
+    historical_years <- all_data_hist %>% filter(year >= 2005 & year <= 2025) %>%
       summarise(start_year = min(year, na.rm = TRUE), end_year = max(year, na.rm = TRUE))
     
-    clim_df <- all_data_hist %>% filter(year >= 2005 & year <= 2022) %>%
+    clim_df <- all_data_hist %>% filter(year >= 2005 & year <= 2025) %>%
       group_by(month_day) %>%
       summarise(min = min(value, na.rm = TRUE), max = max(value, na.rm = TRUE),
                 mean = mean(value, na.rm = TRUE), median = median(value, na.rm = TRUE), .groups = "drop")
     
-    df_hist <- all_data_hist %>% filter(year >= 2005 & year <= 2022)
+    df_hist <- all_data_hist %>% filter(year >= 2005 & year <= 2025)
     
     p90_global <- quantile(df_hist$value, 0.90, na.rm = TRUE)
     p97_global <- quantile(df_hist$value, 0.97, na.rm = TRUE)
@@ -747,7 +747,7 @@ server <- function(input, output, session) {
     
     all_data_hist <- all_data_sig %>% filter(record_type == "O")
     
-    df_hist_all <- all_data_hist %>% filter(year >= 2005 & year <= 2022) %>%
+    df_hist_all <- all_data_hist %>% filter(year >= 2005 & year <= 2025) %>%
       mutate(year_str = as.character(year)) %>% group_by(year_str, month_day) %>%
       summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
       mutate(text = paste("Year:", year_str, "<br>Date:", format(month_day, "%b-%d"), "<br>Value:", round(value, 1)))
@@ -881,7 +881,7 @@ server <- function(input, output, session) {
     daily_data_ytd <- daily_data %>% filter(month_day <= max_month_day)
     
     baseline <- daily_data_ytd %>%
-      filter(year >= 2005 & year <= 2022) %>%
+      filter(year >= 2005 & year <= 2025) %>%
       summarise(across(all_of(available_vars_for_table), ~mean(.x, na.rm = TRUE))) %>%
       pivot_longer(everything(), names_to = "Variable", values_to = "Historical_Mean")
     
@@ -898,7 +898,7 @@ server <- function(input, output, session) {
       mutate(Variable = sapply(Variable, pretty_variable_name)) %>%
       mutate(across(where(is.numeric), ~round(.x, 2))) %>%
       rename(
-        `Historical Mean (2005-2022)` = Historical_Mean,
+        `Historical Mean (2005-2025)` = Historical_Mean,
         !!paste(input$plot_year, "Period Mean") := Current_Period
       )
     
@@ -964,9 +964,9 @@ server <- function(input, output, session) {
         summarise(value = mean(value, na.rm = TRUE), .groups = "drop") 
       
       # 2. Build the output columns
-      # Historical Data (2005-2022)
+      # Historical Data (2005-2025)
       df_hist <- all_data_sig %>% 
-        filter(record_type == "O", year >= 2005, year <= 2022) %>%
+        filter(record_type == "O", year >= 2005, year <= 2025) %>%
         group_by(month_day) %>%
         summarise(
           Historical_Mean = round(mean(value, na.rm = TRUE), 2),
