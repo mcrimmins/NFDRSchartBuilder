@@ -31,6 +31,7 @@ library(rlang)
 library(httr)
 library(readr)
 library(lubridate)
+library(grid)
 
 # -----------------------------
 # Helper Functions
@@ -689,8 +690,13 @@ server <- function(input, output, session) {
                           " vs Climatology (", historical_years$start_year, "–", historical_years$end_year, ")"),
         x = "Month-Day",
         y = y_axis_label,
-        caption = "Data from FEMS-API"
+        caption = "EXPERIMENTAL PRODUCT -- University of Arizona -- Data from FEMS-API"
       ) +
+      #... your existing ggplot code ... +
+      annotation_custom(
+        textGrob("EXPERIMENTAL",
+                 gp = gpar(col = "red", alpha = 0.15, fontsize = 80, fontface = "bold"))
+      )+
       theme_bw(base_size = 14)
     
     if (nrow(df_current_obs) > 0) {
@@ -821,7 +827,30 @@ server <- function(input, output, session) {
       p <- p + geom_line(data = df_current_fcst, aes(x = month_day, y = value,group = 1, color = !!fcstYr, text = text), linewidth = 1, linetype = "solid")
     }
     
-    ggplotly(p, tooltip = "text") %>% layout(hovermode = "x unified")
+    #ggplotly(p, tooltip = "text") %>% layout(hovermode = "x unified")
+    
+    # added watermark
+    ggplotly(p, tooltip = "text") %>% 
+      layout(
+        hovermode = "x unified",
+        annotations = list(
+          list(
+            x = 0.5,                
+            y = 0.5,                
+            text = "<b>EXPERIMENTAL</b>", 
+            xref = "paper",         
+            yref = "paper",         
+            xanchor = "center",
+            yanchor = "middle",
+            showarrow = FALSE,      
+            font = list(
+              size = 80,
+              color = "rgba(255, 0, 0, 0.15)" 
+            )
+          )
+        )
+      )
+    
   })
   
   output$summary_table <- renderDT({
