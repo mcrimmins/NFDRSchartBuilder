@@ -183,14 +183,30 @@ download_weather_data <- function(station_id, start_date, end_date) {
       select(-parsed_time) %>%
       select(-matches("flag|ObservationType", ignore.case = TRUE)) 
     
+    # if(all(c("temperature", "relativeHumidity", "windSpeed") %in% names(df))) {
+    #   df <- df %>%
+    #     mutate(
+    #       temp_c = (temperature - 32) * 5 / 9,
+    #       vpd = (1 - relativeHumidity / 100) * (0.6108 * exp((17.27 * temp_c) / (temp_c + 237.3))),
+    #       hdw = (windSpeed * 0.44704) * (vpd * 10)
+    #     ) %>%
+    #     select(-temp_c)
+    # }
+    
+    # adding dewpoint calculation
     if(all(c("temperature", "relativeHumidity", "windSpeed") %in% names(df))) {
       df <- df %>%
         mutate(
           temp_c = (temperature - 32) * 5 / 9,
           vpd = (1 - relativeHumidity / 100) * (0.6108 * exp((17.27 * temp_c) / (temp_c + 237.3))),
-          hdw = (windSpeed * 0.44704) * (vpd * 10)
+          hdw = (windSpeed * 0.44704) * (vpd * 10),
+          
+          # NEW: Dewpoint Calculation (Magnus-Tetens formula)
+          # pmax prevents log(0) errors if RH ever drops to exactly 0%
+          gamma = log(pmax(relativeHumidity, 0.1) / 100) + (17.27 * temp_c) / (237.3 + temp_c),
+          dewpoint = ((237.3 * gamma) / (17.27 - gamma)) * 9/5 + 32
         ) %>%
-        select(-temp_c)
+        select(-temp_c, -gamma)
     }
     
     return(df)
@@ -547,7 +563,9 @@ server <- function(input, output, session) {
                     "Live Herbaceous Fuel Moisture" = "herbaceousLFI_fuelMoisture", "Growing Season Index" = "gsi")
   
   # NEW: Added custom aggregations to Weather variables list
-  weather_var_labels <- c("Temperature (°F)" = "temperature", "Relative Humidity (%)" = "relativeHumidity",
+  weather_var_labels <- c("Temperature (°F)" = "temperature",
+                          "Dewpoint (°F)" = "dewpoint",
+                          "Relative Humidity (%)" = "relativeHumidity",
                           "Wind Speed (mph)" = "windSpeed", "Wind Gust (mph)" = "gustSpeed",
                           "Wind Direction (°)" = "windDirection", "Gust Direction (°)" = "gustDirection",
                           "Solar Radiation (W/m²)" = "solarRadiation", "Hourly Precipitation (in)" = "precipitation",
