@@ -64,7 +64,8 @@ download_nfdrs_data <- function(station_id, start_date, end_date,
   message("Fetching NFDRS data from: ", url)
   
   tryCatch({
-    res <- httr::GET(url)
+    #res <- httr::GET(url)
+    res <- httr::GET(url, httr::timeout(120))
     httr::stop_for_status(res)
     
     raw_text <- httr::content(res, "text", encoding = "UTF-8")
@@ -515,7 +516,7 @@ server <- function(input, output, session) {
         if (!is.null(data_cache[[key]])) {
           data_cache[[key]]
         } else {
-          df <- download_nfdrs_data(id, "2000-01-01", Sys.Date() + 7, input$fuel_model)
+          df <- download_nfdrs_data(id, "2004-01-01", Sys.Date() + 7, input$fuel_model)
           if (is.null(df)) {
             showNotification(paste("Failed to fetch NFDRS data for station", id), type = "error", duration = 6)
             return(tibble()) 
@@ -530,7 +531,7 @@ server <- function(input, output, session) {
         if (!is.null(weather_data_cache[[id]])) {
           weather_data_cache[[id]]
         } else {
-          df <- download_weather_data(id, "2000-01-01", Sys.Date() + 7)
+          df <- download_weather_data(id, "2004-01-01", Sys.Date() + 7)
           if (is.null(df)) {
             showNotification(paste("Failed to fetch weather data for station", id), type = "error", duration = 6)
             return(tibble())
