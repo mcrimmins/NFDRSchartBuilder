@@ -6,6 +6,6 @@ NFDRSChartBuilder.Rproj
 rsconnect
 .Renviron
 .positai
-test_fems_api_log.txt
-fems_schema.json
-test_fems_api_2_log.txt
+
+# test output
+tests/logs/

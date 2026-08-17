@@ -28,12 +28,12 @@
 # Transcript -> test_fems_api_2_log.txt
 # ==============================================================================
 
-source("fems_api.R")
+source("R/fems_api.R")
 
 STATION_A  <- "21202"   # SAGUARO,   POR starts 2005-01-01
 STATION_B  <- "21207"   # RINCON
 FUEL_MODEL <- "Y"
-LOG_FILE   <- "test_fems_api_2_log.txt"
+LOG_FILE <- "tests/logs/test_fems_api_2_log.txt"
 
 RUN_A <- TRUE
 RUN_B <- TRUE

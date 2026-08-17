@@ -1,0 +1,9 @@
+# Excluded from the Posit Connect deployment bundle.
+# Everything here is development-only; the deployed app needs app.R, R/,
+# data/, and www/.
+tests/
+archive/
+docs/
+scripts/
+README.md
+.gitattributes

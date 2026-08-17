@@ -406,7 +406,7 @@ reverse_fill_vars <- c(
 # -----------------------------
 # Load Station Metadata
 # -----------------------------
-station_metadata <- read.csv("station_metadata_FEMS3_042225.csv", stringsAsFactors = FALSE)
+station_metadata <- read.csv("data/station_metadata_FEMS3_042225.csv", stringsAsFactors = FALSE)
 # -----------------------------
 # UI
 # -----------------------------

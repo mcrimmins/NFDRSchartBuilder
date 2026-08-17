@@ -29,14 +29,14 @@
 # in the console, and a transcript is written to test_fems_api_log.txt.
 # ==============================================================================
 
-source("fems_api.R")
+source("R/fems_api.R")
 
 # ---- configuration -----------------------------------------------------------
 STATION_ID      <- "21202"          # the app's default station
 FUEL_MODEL      <- "Y"
 DAYS_BACK       <- 3                # small window - this is a smoke test
 RUN_LIMIT_PROBE <- FALSE            # set TRUE to test a 1-year+ request
-LOG_FILE        <- "test_fems_api_log.txt"
+LOG_FILE <- "tests/logs/test_fems_api_log.txt"
 
 end_date   <- Sys.Date()
 start_date <- end_date - DAYS_BACK
@@ -149,7 +149,7 @@ run_stage("2-schema", "Introspect the schema", {
     }'
 
   d <- fems_gql(q)
-  jsonlite::write_json(d, "fems_schema.json", auto_unbox = TRUE, pretty = TRUE)
+  jsonlite::write_json(d, "tests/logs/fems_schema.json", auto_unbox = TRUE, pretty = TRUE)
   cat("  Wrote fems_schema.json\n\n")
 
   types      <- d$`__schema`$types
@@ -522,7 +522,7 @@ if (length(.results) == 0) {
 }
 cat("\nResults are in the list `TEST` (e.g. TEST[['4b-nfdrs-full']]).\n")
 cat("Transcript written to ", LOG_FILE, "\n", sep = "")
-if (file.exists("fems_schema.json")) {
+if (file.exists("tests/logs/fems_schema.json")) {
   cat("Schema written to fems_schema.json\n")
 }
 hr("=")

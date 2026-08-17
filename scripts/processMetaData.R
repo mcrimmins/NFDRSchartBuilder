@@ -7,7 +7,7 @@
 library(lutz)
 
 # station metadata file name
-file<-"FEMS_3.0_RAWS_Master_Station_List_and_Metadata.csv"
+file<-"data/FEMS_3.0_RAWS_Master_Station_List_and_Metadata.csv"
 
 # load file
 station_metadata <- read.csv(file, stringsAsFactors = FALSE)
@@ -19,4 +19,4 @@ station_metadata <- station_metadata[,c("station_id", "station_name", "latitude"
 station_metadata$tz <- lutz::tz_lookup_coords(station_metadata$latitude, station_metadata$longitude, method = "accurate")
 
 # save df to csv
-write.csv(station_metadata, file = "station_metadata_FEMS3_042225.csv", row.names = FALSE)
+write.csv(station_metadata, file = "data/station_metadata_FEMS3_042225.csv", row.names = FALSE)

@@ -16,11 +16,11 @@
 # Transcript -> test_fems_api_3_log.txt
 # ==============================================================================
 
-source("fems_download.R")
+source("R/fems_download.R")
 
 STATION    <- "21202"
 FUEL_MODEL <- "Y"
-LOG_FILE   <- "test_fems_api_3_log.txt"
+LOG_FILE <- "tests/logs/test_fems_api_3_log.txt"
 
 RUN_1 <- TRUE    # page-size sweep on a 1-year pull
 RUN_2 <- TRUE    # full period of record, one station   (the slow one)

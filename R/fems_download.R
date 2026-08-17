@@ -38,7 +38,7 @@
 #     from the cache need fetching.
 # ==============================================================================
 
-source("fems_api.R")
+source("R/fems_api.R")
 
 # ------------------------------------------------------------------
 # GraphQL documents
@@ -117,9 +117,10 @@ source("fems_api.R")
   }'
 
 # Default page size. The guide's own examples use per_page up to 300000, and
-# probe C showed per-request latency dominates over per-row cost, so bigger
-# pages mean fewer round trips. Tune with test_fems_api_3.R.
-FEMS_PER_PAGE <- 25000
+# benchmarked at full-POR scale: 25000 -> 62.5s, 100000 -> 30.6s, 300000 ->
+# 29.3s. 100000 is the knee, and keeps 2 pages rather than 1 so a failure
+# retries half the pull rather than all of it.
+FEMS_PER_PAGE <- 100000
 
 # ------------------------------------------------------------------
 # Internal helpers
