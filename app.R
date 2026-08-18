@@ -35,10 +35,8 @@ library(grid)
 # Helper Functions
 # -----------------------------
 #####
-# Safe summary function to avoid warnings
-safe_summary1 <- function(x, fun) {
-  if (all(is.na(x))) NA else fun(x, na.rm = TRUE)
-}
+# safe_summary1() moved to R/daily_series.R so the aggregation chain and its
+# helper travel together and tests/ can source them without app.R.
 ##### API downloads -----
 # ------------------------------------------------------------------
 # Data access now lives in R/fems_download.R, which queries the FEMS
@@ -64,6 +62,7 @@ safe_summary1 <- function(x, fun) {
 # environment variables on Posit Connect. See README.md.
 # ------------------------------------------------------------------
 source("R/fems_download.R")
+source("R/daily_series.R")
 
 # Start of the fetch window. 2005 rather than the previous 2004 because the
 # climatology baseline, the plot-year input, and every downstream filter all
@@ -504,6 +503,18 @@ server <- function(input, output, session) {
     selectInput("variable", "Select Variable", choices = display_vars, selected = display_vars[1])
   })
   
+  # ---------------------------------------------------------------------
+  # Shared daily series
+  # ---------------------------------------------------------------------
+  # One source of truth for the daily aggregation. Deliberately a one-line
+  # wrapper: all the logic is in build_daily_series() (R/daily_series.R) so
+  # that tests/ can call it without a Shiny session.
+  daily_series <- reactive({
+    req(all_data_cache(), input$variable, input$daily_stat, input$month_range)
+    build_daily_series(all_data_cache(), input$variable, input$daily_stat,
+                       input$month_range)
+  })
+  
   # Plot rendering
   output$climatology_plot <- renderPlot({
     validate(need(!is.null(all_data_cache()), "Welcome! Please select your station(s) and click 'Fetch Station Data' to generate the chart."))
@@ -517,40 +528,9 @@ server <- function(input, output, session) {
       pull(station_name) %>% unique()
     station_label <- paste(station_names, collapse = ", ")
     
-    # NEW: Advanced aggregation handling that intercepts custom variables
-    stn_data <- all_data %>%
-      group_by(station_id, date, record_type) %>%
-      summarise(
-        value = if (input$variable %in% c("precip_total", "precip_cum")) {
-          safe_summary1(precipitation, sum)
-        } else if (input$variable == "burn_period") {
-          safe_summary1(relativeHumidity < 20, sum)
-        } else if (input$daily_stat == "1300LST") {
-          safe_summary1(.data[[input$variable]][hour == 13], mean)
-        } else {
-          safe_summary1(.data[[input$variable]], match.fun(input$daily_stat))
-        },
-        .groups = "drop"
-      ) %>%
-      mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
-    
-    # NEW STEP: Calculate Cumulative Sum BEFORE the month filter crops the data!
-    if (input$variable == "precip_cum") {
-      stn_data <- stn_data %>%
-        arrange(date) %>%
-        group_by(station_id, year, record_type) %>%
-        # coalesce() turns NAs into 0s so they don't break the running total
-        mutate(value = cumsum(coalesce(value, 0))) %>%
-        ungroup()
-    }
-    
-    # Apply calendar month filtering!
-    stn_data <- stn_data %>%
-      filter(lubridate::month(date) >= input$month_range[1] & lubridate::month(date) <= input$month_range[2])
-    
-    all_data_sig <- stn_data %>%
-      group_by(month_day, year, record_type) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+    # Daily aggregation -- shared with the interactive plot and the CSV
+    # export. Lived here as one of three verbatim copies until now.
+    all_data_sig <- daily_series()
     
     all_data_hist <- all_data_sig %>% filter(record_type == "O")
     
@@ -647,42 +627,8 @@ server <- function(input, output, session) {
     validate(need(!is.null(all_data_cache()), "Welcome! Please select your station(s) and click 'Fetch Station Data' to generate the chart."))
     req(input$variable, input$daily_stat, input$plot_year, fetched_fuel_model())
     
-    all_data <- all_data_cache()
-    
-    # Advanced aggregation handling (identical to static plot)
-    stn_data <- all_data %>%
-      group_by(station_id, date, record_type) %>%
-      summarise(
-        value = if (input$variable %in% c("precip_total", "precip_cum")) {
-          safe_summary1(precipitation, sum)
-        } else if (input$variable == "burn_period") {
-          safe_summary1(relativeHumidity < 20, sum)
-        } else if (input$daily_stat == "1300LST") {
-          safe_summary1(.data[[input$variable]][hour == 13], mean)
-        } else {
-          safe_summary1(.data[[input$variable]], match.fun(input$daily_stat))
-        },
-        .groups = "drop"
-      ) %>%
-      mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
-    
-    # NEW STEP: Calculate Cumulative Sum BEFORE the month filter crops the data!
-    if (input$variable == "precip_cum") {
-      stn_data <- stn_data %>%
-        arrange(date) %>%
-        group_by(station_id, year, record_type) %>%
-        # coalesce() turns NAs into 0s so they don't break the running total
-        mutate(value = cumsum(coalesce(value, 0))) %>%
-        ungroup()
-    }
-    
-    # Apply calendar month filtering!
-    stn_data <- stn_data %>%
-      filter(lubridate::month(date) >= input$month_range[1] & lubridate::month(date) <= input$month_range[2])
-    
-    all_data_sig <- stn_data %>%
-      group_by(month_day, year, record_type) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+    # Daily aggregation -- shared with the static plot and the CSV export.
+    all_data_sig <- daily_series()
     
     all_data_hist <- all_data_sig %>% filter(record_type == "O")
     
@@ -888,42 +834,8 @@ server <- function(input, output, session) {
       # Require the data to be fetched first
       req(all_data_cache(), input$variable, input$daily_stat, input$plot_year)
       
-      all_data <- all_data_cache()
-      
-      # 1. Base Aggregation (Identical to plot logic)
-      stn_data <- all_data %>%
-        group_by(station_id, date, record_type) %>%
-        summarise(
-          value = if (input$variable %in% c("precip_total", "precip_cum")) {
-            safe_summary1(precipitation, sum)
-          } else if (input$variable == "burn_period") {
-            safe_summary1(relativeHumidity < 20, sum)
-          } else if (input$daily_stat == "1300LST") {
-            safe_summary1(.data[[input$variable]][hour == 13], mean)
-          } else {
-            safe_summary1(.data[[input$variable]], match.fun(input$daily_stat))
-          },
-          .groups = "drop"
-        ) %>%
-        mutate(year = as.integer(format(date, "%Y")), month_day = as.Date(format(date, "2024-%m-%d")))
-      
-      # Cumulative step
-      if (input$variable == "precip_cum") {
-        stn_data <- stn_data %>%
-          arrange(date) %>%
-          group_by(station_id, year, record_type) %>%
-          mutate(value = cumsum(coalesce(value, 0))) %>%
-          ungroup()
-      }
-      
-      # Month filtering step
-      stn_data <- stn_data %>%
-        filter(lubridate::month(date) >= input$month_range[1] & lubridate::month(date) <= input$month_range[2])
-      
-      # Station averaging
-      all_data_sig <- stn_data %>%
-        group_by(month_day, year, record_type) %>%
-        summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+      # 1. Base aggregation -- now shared with both plots via daily_series().
+      all_data_sig <- daily_series()
       
       # 2. Build the output columns
       # Historical Data (2005-2025)
