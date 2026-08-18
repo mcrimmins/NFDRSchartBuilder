@@ -41,348 +41,34 @@ safe_summary1 <- function(x, fun) {
 }
 ##### API downloads -----
 # ------------------------------------------------------------------
-# NOTE (chunked downloads): FEMS now caps requests at 1 year per station, so
-# both download functions below split their date range into calendar-year
-# chunks, fetch each chunk separately with retries, bind the raw results, and
-# then run the original post-processing logic once on the combined data frame.
-# Public signatures are unchanged, so the call sites in the server are the same.
-# ------------------------------------------------------------------
-
-# ------------------------------------------------------------------
-# Internal: harmonize column types across chunks before bind_rows().
+# Data access now lives in R/fems_download.R, which queries the FEMS
+# Read-Only GraphQL API (authenticated) instead of the old public CSV
+# download endpoints.
 #
-# readr guesses column types independently for each request, so a column that
-# happens to be entirely empty in (say) 2004 comes back as logical while the
-# same column in 2015 is numeric. bind_rows() errors on that. This pass finds
-# the "real" class for each column from the chunks that actually have data and
-# coerces the degenerate all-NA columns to match.
-# ------------------------------------------------------------------
-harmonize_chunk_types <- function(chunks) {
-  all_cols <- unique(unlist(lapply(chunks, names)))
-  target <- list()
-  
-  for (nm in all_cols) {
-    for (ch in chunks) {
-      if (!nm %in% names(ch)) next
-      col <- ch[[nm]]
-      # skip columns that are entirely empty - they tell us nothing about type
-      if (is.logical(col) && all(is.na(col))) next
-      target[[nm]] <- class(col)[1]
-      break
-    }
-  }
-  
-  lapply(chunks, function(ch) {
-    for (nm in intersect(names(ch), names(target))) {
-      col <- ch[[nm]]
-      tgt <- target[[nm]]
-      if (identical(class(col)[1], tgt)) next
-      
-      if (is.logical(col) && all(is.na(col))) {
-        # empty column: cast the NAs into the class used by the other chunks
-        ch[[nm]] <- switch(
-          tgt,
-          numeric   = as.numeric(col),
-          double    = as.numeric(col),
-          integer   = as.integer(col),
-          character = as.character(col),
-          Date      = as.Date(rep(NA, length(col))),
-          POSIXct   = rep(as.POSIXct(NA, tz = "UTC"), length(col)),
-          col
-        )
-      } else if (identical(tgt, "character")) {
-        ch[[nm]] <- as.character(col)
-      } else if (tgt %in% c("numeric", "double") && is.character(col)) {
-        # a year came back with stray text in a numeric field
-        ch[[nm]] <- suppressWarnings(as.numeric(col))
-      }
-    }
-    ch
-  })
-}
-
-# ------------------------------------------------------------------
-# Internal: split [start_date, end_date] into calendar-year chunks and call
-# fetch_one() on each. Used by both download functions.
+# Two functions were retired along with those endpoints:
 #
-#   fetch_one(station_id, chunk_start, chunk_end) must return:
-#     - a data frame of raw rows on success
-#     - an empty tibble() when the API legitimately has no data for that year
-#     - or throw an error / return NULL on a genuine failure (triggers retry)
+#   fetch_in_year_chunks()  -- the CSV endpoints capped requests at one year
+#       per station, so the range had to be split into calendar years and
+#       reassembled. The GraphQL API has no such cap: a 21-year request for
+#       one station returns 184,098 rows without complaint. Nothing to chunk.
 #
-# Returns the bound raw data frame, or NULL if every chunk failed.
-# Years that failed after all retries are recorded in attr(x, "failed_years").
+#   harmonize_chunk_types() -- existed only because readr guessed column
+#       types independently for each CSV request, so a column that was empty
+#       in one year came back logical and collided with the same column as
+#       numeric in another. JSON is typed, so the problem cannot arise.
+#
+# The new functions return the same column names the rest of this file
+# already uses, so nothing downstream of all_data_cache() changed.
+#
+# Requires FEMS_USER and FEMS_KEY in .Renviron, and the same two as
+# environment variables on Posit Connect. See README.md.
 # ------------------------------------------------------------------
-fetch_in_year_chunks <- function(station_id, start_date, end_date, fetch_one,
-                                 label = "data", max_tries = 3, pause = 0.5) {
-  
-  start_date <- as.Date(start_date)
-  end_date   <- as.Date(end_date)
-  
-  if (is.na(start_date) || is.na(end_date) || end_date < start_date) {
-    warning("Invalid ", label, " date range for station ", station_id)
-    return(NULL)
-  }
-  
-  years <- seq(as.integer(format(start_date, "%Y")),
-               as.integer(format(end_date,   "%Y")))
-  
-  collected <- list()
-  failed    <- integer(0)
-  
-  for (i in seq_along(years)) {
-    y  <- years[i]
-    cs <- max(start_date, as.Date(paste0(y, "-01-01")))
-    ce <- min(end_date,   as.Date(paste0(y, "-12-31")))
-    
-    chunk <- NULL
-    for (attempt in seq_len(max_tries)) {
-      chunk <- tryCatch(
-        fetch_one(station_id, cs, ce),
-        error = function(e) {
-          message("  ", label, " ", y, " attempt ", attempt, " failed: ",
-                  conditionMessage(e))
-          NULL
-        }
-      )
-      if (!is.null(chunk)) break
-      if (attempt < max_tries) Sys.sleep(pause * (2 ^ (attempt - 1)))
-    }
-    
-    if (is.null(chunk)) {
-      failed <- c(failed, y)
-    } else if (nrow(chunk) > 0) {
-      collected[[length(collected) + 1]] <- chunk
-    }
-    
-    Sys.sleep(pause)  # be polite to the FEMS server between requests
-  }
-  
-  if (length(collected) == 0) {
-    warning("No ", label, " data returned for station ", station_id,
-            " across ", length(years), " year(s).")
-    return(NULL)
-  }
-  
-  out <- tryCatch(
-    dplyr::bind_rows(harmonize_chunk_types(collected)),
-    error = function(e) {
-      warning("Failed to combine ", label, " year chunks for station ",
-              station_id, ": ", conditionMessage(e))
-      NULL
-    }
-  )
-  if (is.null(out)) return(NULL)
-  
-  if (length(failed) > 0) {
-    warning("Station ", station_id, ": ", label,
-            " data is INCOMPLETE. Missing year(s): ",
-            paste(failed, collapse = ", "))
-  }
-  
-  attr(out, "failed_years") <- failed
-  out
-}
+source("R/fems_download.R")
 
-# ------------------------------------------------------------------
-# NFDRS download (public signature unchanged)
-# ------------------------------------------------------------------
-download_nfdrs_data <- function(station_id, start_date, end_date,
-                                fuel_model = "Y", dataset = "all") {
-  
-  base_url <- "https://fems.fs2c.usda.gov/api/ext-climatology/download-nfdr"
-  
-  # ---- single-year fetch -------------------------------------------------
-  fetch_one <- function(station_id, chunk_start, chunk_end) {
-    
-    query_params <- list(
-      stationIds = station_id,
-      startDate  = paste0(chunk_start, "T00:00:00Z"),
-      endDate    = paste0(chunk_end,   "T23:59:59Z"),
-      dataFormat = "csv",
-      dataset    = dataset,
-      fuelModels = fuel_model
-    )
-    
-    url <- httr::modify_url(base_url, query = query_params)
-    message("Fetching NFDRS data from: ", url)
-    
-    res <- httr::GET(url, httr::timeout(120))
-    httr::stop_for_status(res)
-    
-    raw_text <- httr::content(res, "text", encoding = "UTF-8")
-    df <- readr::read_csv(I(raw_text), show_col_types = FALSE,
-                          guess_max = 100000)
-    
-    if (nrow(df) == 0) return(tibble::tibble())  # empty year, not a failure
-    df
-  }
-  
-  # ---- loop the years, then process the combined result once -------------
-  df <- fetch_in_year_chunks(station_id, start_date, end_date,
-                             fetch_one, label = "NFDRS")
-  if (is.null(df) || nrow(df) == 0) return(NULL)
-  
-  tryCatch({
-    
-    time_col_idx <- grep("observation_time_lst|observationtime|datetime", names(df), ignore.case = TRUE)
-    if (length(time_col_idx) == 0) {
-      stop("No valid time column found. API returned: ", paste(names(df), collapse = ", "))
-    }
-    time_col <- names(df)[time_col_idx[1]]
-    
-    if (inherits(df[[time_col]], "POSIXt")) {
-      df$parsed_time <- df[[time_col]]
-    } else {
-      time_str <- as.character(df[[time_col]])
-      if (any(grepl("Z$", time_str, ignore.case = TRUE))) {
-        df$parsed_time <- lubridate::ymd_hms(time_str, tz = "UTC", truncated = 3, quiet = TRUE)
-      } else {
-        df$parsed_time <- lubridate::ymd_hms(time_str, truncated = 3, quiet = TRUE)
-      }
-    }
-    
-    df <- df %>%
-      mutate(
-        station_id = as.character(station_id),
-        date = as.Date(parsed_time),
-        hour = as.integer(format(parsed_time, "%H")),
-        record_type = substr(toupper(NFDRType), 1, 1)
-      ) %>%
-      select(-parsed_time) %>%
-      rename(any_of(c(
-        energyReleaseComponent = "EnergyReleaseComponent",
-        burningIndex = "BurningIndex",
-        ignitionComponent = "IgnitionComponent",
-        spreadComponent = "SpreadComponent",
-        kbdi = "KBDI",
-        oneHR_TL_FuelMoisture = "OneHR_TL_FuelMoisture",
-        tenHR_TL_FuelMoisture = "TenHR_TL_FuelMoisture",
-        hundredHR_TL_FuelMoisture = "HundredHR_TL_FuelMoisture",
-        thousandHR_TL_FuelMoisture = "ThousandHR_TL_FuelMoisture",
-        woodyLFI_fuelMoisture = "WoodyLFI_FuelMoisture",
-        herbaceousLFI_fuelMoisture = "HerbaceousLFI_fuelMoisture",
-        gsi = "GSI"
-      ))) %>%
-      # guard against duplicate keys across chunk boundaries / retries, which
-      # would multiply rows in the downstream left_join()
-      distinct(station_id, date, hour, record_type, .keep_all = TRUE)
-    
-    return(df)
-    
-  }, error = function(e) {
-    warning("Failed to download or parse NFDRS data: ", conditionMessage(e))
-    return(NULL)
-  })
-}
-#####
-#####
-# weather download function
-download_weather_data <- function(station_id, start_date, end_date) {
-  
-  base_url <- "https://fems.fs2c.usda.gov/api/ext-climatology/download-weather"
-  
-  # ---- single-year fetch -------------------------------------------------
-  fetch_one <- function(station_id, chunk_start, chunk_end) {
-    
-    query_params <- list(
-      stationIds    = station_id,
-      startDate     = paste0(chunk_start, "T00:00:00Z"),
-      endDate       = paste0(chunk_end,   "T23:59:59Z"),
-      dataFormat    = "csv",
-      dataIncrement = "hourly",
-      dataset       = "all",
-      stationtypes  = "RAWS(SATNFDRS)"
-    )
-    
-    url <- httr::modify_url(base_url, query = query_params)
-    message("Fetching Weather data from: ", url)
-    
-    res <- httr::GET(url, httr::timeout(120))
-    httr::stop_for_status(res)
-    
-    raw_text <- httr::content(res, "text", encoding = "UTF-8")
-    df <- readr::read_csv(I(raw_text), show_col_types = FALSE,
-                          guess_max = 100000)
-    
-    if (nrow(df) == 0) return(tibble::tibble())  # empty year, not a failure
-    df
-  }
-  
-  # ---- loop the years, then process the combined result once -------------
-  df <- fetch_in_year_chunks(station_id, start_date, end_date,
-                             fetch_one, label = "Weather")
-  if (is.null(df) || nrow(df) == 0) return(NULL)
-  
-  tryCatch({
-    
-    df <- df %>%
-      rename_with(~"observationTime", matches("DateTime|ObservationTime", ignore.case = TRUE)) %>%
-      rename_with(~"temperature", contains("Temperature")) %>%
-      rename_with(~"relativeHumidity", matches("Relative Humidity|RelativeHumidity", ignore.case = TRUE)) %>%
-      rename_with(~"precipitation", contains("Precipitation")) %>%
-      rename_with(~"windSpeed", matches("Wind Speed|WindSpeed", ignore.case = TRUE)) %>%
-      rename_with(~"windDirection", matches("Wind Azimuth|WindAzimuth", ignore.case = TRUE)) %>%
-      rename_with(~"gustSpeed", matches("Gust Speed|GustSpeed", ignore.case = TRUE)) %>%
-      rename_with(~"gustDirection", matches("Gust Azimuth|GustAzimuth", ignore.case = TRUE)) %>%
-      rename_with(~"solarRadiation", matches("Solar Radiation|SolarRadiation", ignore.case = TRUE))
-    
-    if (inherits(df$observationTime, "POSIXt")) {
-      df$parsed_time <- df$observationTime
-    } else {
-      time_str <- as.character(df$observationTime)
-      if (any(grepl("Z$", time_str, ignore.case = TRUE))) {
-        df$parsed_time <- lubridate::ymd_hms(time_str, tz = "UTC", truncated = 3, quiet = TRUE)
-      } else {
-        df$parsed_time <- lubridate::ymd_hms(time_str, truncated = 3, quiet = TRUE)
-      }
-    }
-    
-    df <- df %>%
-      mutate(
-        station_id = as.character(station_id),
-        date = as.Date(parsed_time),
-        hour = as.integer(format(parsed_time, "%H")),
-        record_type = substr(toupper(ObservationType), 1, 1)
-      ) %>%
-      select(-parsed_time) %>%
-      select(-matches("flag|ObservationType", ignore.case = TRUE)) %>%
-      # guard against duplicate keys across chunk boundaries / retries
-      distinct(station_id, date, hour, record_type, .keep_all = TRUE)
-    
-    # if(all(c("temperature", "relativeHumidity", "windSpeed") %in% names(df))) {
-    #   df <- df %>%
-    #     mutate(
-    #       temp_c = (temperature - 32) * 5 / 9,
-    #       vpd = (1 - relativeHumidity / 100) * (0.6108 * exp((17.27 * temp_c) / (temp_c + 237.3))),
-    #       hdw = (windSpeed * 0.44704) * (vpd * 10)
-    #     ) %>%
-    #     select(-temp_c)
-    # }
-    
-    # adding dewpoint calculation
-    if(all(c("temperature", "relativeHumidity", "windSpeed") %in% names(df))) {
-      df <- df %>%
-        mutate(
-          temp_c = (temperature - 32) * 5 / 9,
-          vpd = (1 - relativeHumidity / 100) * (0.6108 * exp((17.27 * temp_c) / (temp_c + 237.3))),
-          hdw = (windSpeed * 0.44704) * (vpd * 10),
-          
-          # NEW: Dewpoint Calculation (Magnus-Tetens formula)
-          # pmax prevents log(0) errors if RH ever drops to exactly 0%
-          gamma = log(pmax(relativeHumidity, 0.1) / 100) + (17.27 * temp_c) / (237.3 + temp_c),
-          dewpoint = ((237.3 * gamma) / (17.27 - gamma)) * 9/5 + 32
-        ) %>%
-        select(-temp_c, -gamma)
-    }
-    
-    return(df)
-    
-  }, error = function(e) {
-    warning("Weather data parse failed: ", conditionMessage(e))
-    return(NULL)
-  })
-}
+# Start of the fetch window. 2005 rather than the previous 2004 because the
+# climatology baseline, the plot-year input, and every downstream filter all
+# begin at 2005 -- the 2004 rows were downloaded and then discarded.
+FETCH_START_DATE <- "2005-01-01"
 #####
 pretty_variable_name <- function(var) {
   # Special bypass for our custom computed variables
@@ -670,48 +356,115 @@ server <- function(input, output, session) {
     req(input$fuel_model)
     stns <- selected_stations()
     req(length(stns) > 0)
-    
-    withProgress(message = "Downloading & assembling data...", {
-      all_nfdrs <- map_dfr(stns, function(id) {
-        key <- paste(id, input$fuel_model, sep = "_")
-        if (!is.null(data_cache[[key]])) {
-          data_cache[[key]]
-        } else {
-          df <- download_nfdrs_data(id, "2004-01-01", Sys.Date() + 7, input$fuel_model)
-          if (is.null(df)) {
-            showNotification(paste("Failed to fetch NFDRS data for station", id), type = "error", duration = 6)
-            return(tibble())
+
+    fm <- input$fuel_model
+
+    # Work out what is actually missing. The two feeds are cached separately
+    # on purpose: weather does not depend on fuel model, so switching Y <-> Z
+    # re-fetches only the NFDRS side.
+    need_nfdrs <- stns[vapply(stns, function(id)
+      is.null(data_cache[[paste(id, fm, sep = "_")]]), logical(1))]
+    need_wx <- stns[vapply(stns, function(id)
+      is.null(weather_data_cache[[id]]), logical(1))]
+
+    to_fetch <- union(need_nfdrs, need_wx)
+    failed   <- character(0)
+
+    # Friendly names for the progress readout.
+    station_label <- function(id) {
+      nm <- station_metadata$station_name[match(id, station_metadata$station_id)]
+      if (is.na(nm)) id else nm
+    }
+
+    withProgress(message = "Downloading & assembling data...", value = 0, {
+
+      # Stations are downloaded ONE AT A TIME, not batched. FEMS rejects a
+      # local-station-time query covering more than one station, and local
+      # time is what makes date/hour correct. Fetching serially also means
+      # each station is cached the moment it completes, so a failure part way
+      # through does not discard the stations already retrieved.
+      n <- length(to_fetch)
+      for (i in seq_along(to_fetch)) {
+        id  <- to_fetch[i]
+        nm  <- station_label(id)
+        base <- (i - 1) / n
+
+        setProgress(value = base,
+                    detail = paste0(nm, " (", i, " of ", n, "): NFDRS"))
+
+        ok <- TRUE
+
+        if (id %in% need_nfdrs) {
+          df <- tryCatch(
+            fems_download_nfdrs(id, FETCH_START_DATE, Sys.Date() + 7,
+                                fuel_model = fm, verbose = FALSE),
+            error = function(e) {
+              showNotification(paste0("NFDRS download failed for ", nm, ": ",
+                                      conditionMessage(e)),
+                               type = "error", duration = 10)
+              NULL
+            })
+          if (is.null(df) || nrow(df) == 0) {
+            ok <- FALSE
+          } else {
+            data_cache[[paste(id, fm, sep = "_")]] <- df
           }
-          df$station_id <- id
-          data_cache[[key]] <- df
-          df
         }
-      })
-      
-      all_weather <- map_dfr(stns, function(id) {
-        if (!is.null(weather_data_cache[[id]])) {
-          weather_data_cache[[id]]
-        } else {
-          df <- download_weather_data(id, "2004-01-01", Sys.Date() + 7)
-          if (is.null(df)) {
-            showNotification(paste("Failed to fetch weather data for station", id), type = "error", duration = 6)
-            return(tibble())
+
+        if (ok && id %in% need_wx) {
+          setProgress(value = base + 0.5 / n,
+                      detail = paste0(nm, " (", i, " of ", n, "): weather"))
+          df <- tryCatch(
+            fems_download_weather(id, FETCH_START_DATE, Sys.Date() + 7,
+                                  verbose = FALSE),
+            error = function(e) {
+              showNotification(paste0("Weather download failed for ", nm, ": ",
+                                      conditionMessage(e)),
+                               type = "error", duration = 10)
+              NULL
+            })
+          if (is.null(df) || nrow(df) == 0) {
+            ok <- FALSE
+          } else {
+            weather_data_cache[[id]] <- df
           }
-          df$station_id <- id
-          weather_data_cache[[id]] <- df
-          df
         }
-      })
-      
-      if (nrow(all_nfdrs) == 0 || nrow(all_weather) == 0) {
-        showNotification("One or more datasets returned empty. Cannot process station.", type = "error")
+
+        if (!ok) failed <- c(failed, id)
+      }
+
+      setProgress(value = 1, detail = "Assembling")
+
+      # A station is usable only if BOTH feeds are present, since the plots
+      # read NFDRS indices and weather variables from the same joined frame.
+      usable <- stns[vapply(stns, function(id)
+        !is.null(data_cache[[paste(id, fm, sep = "_")]]) &&
+        !is.null(weather_data_cache[[id]]), logical(1))]
+      failed <- setdiff(stns, usable)
+
+      if (length(usable) == 0) {
+        showNotification("No data could be retrieved for the selected station(s).",
+                         type = "error", duration = 10)
         return(NULL)
       }
-      
-      all_data <- left_join(all_nfdrs, all_weather, by = c("station_id", "date", "hour", "record_type"))
-      
+      if (length(failed) > 0) {
+        showNotification(paste("No data for station(s):",
+                               paste(vapply(failed, station_label, character(1)),
+                                     collapse = ", "),
+                               "- charts show the remaining station(s)."),
+                         type = "warning", duration = 10)
+      }
+
+      all_nfdrs <- bind_rows(lapply(usable, function(id)
+        data_cache[[paste(id, fm, sep = "_")]]))
+      all_weather <- bind_rows(lapply(usable, function(id)
+        weather_data_cache[[id]]))
+
+      all_data <- left_join(all_nfdrs, all_weather,
+                            by = c("station_id", "date", "hour", "record_type"))
+
       all_data_cache(all_data)
-      fetched_fuel_model(input$fuel_model)
+      fetched_fuel_model(fm)
       data_outdated(FALSE)
     })
   })

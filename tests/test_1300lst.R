@@ -38,7 +38,7 @@ LOG_FILE <- "tests/logs/test_1300lst_log.txt"
 s <- Sys.Date() - DAYS
 e <- Sys.Date()
 
-hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
+.hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
 
 sink(LOG_FILE, split = TRUE)
 cat("1300LST check --", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
@@ -57,7 +57,7 @@ peak_of <- function(df, label) {
 }
 
 # ---- NEW path ---------------------------------------------------------------
-hr(); cat("NEW path (GraphQL, hour from display_hour_lst)\n"); hr()
+.hr(); cat("NEW path (GraphQL, hour from display_hour_lst)\n"); .hr()
 new_bh <- tryCatch({
   d <- fems_download_weather(STATION, s, e, verbose = FALSE)
   peak_of(d, "new")
@@ -66,7 +66,7 @@ new_bh <- tryCatch({
 # ---- OLD path ---------------------------------------------------------------
 # Extract the entire helper block from app.R: harmonize_chunk_types() through
 # download_weather_data(), which is everything between those two markers.
-hr(); cat("OLD path (CSV endpoint, hour from parsed timestamp)\n"); hr()
+.hr(); cat("OLD path (CSV endpoint, hour from parsed timestamp)\n"); .hr()
 
 old_bh <- tryCatch({
   src <- readLines("app.R", warn = FALSE)
@@ -94,7 +94,7 @@ old_bh <- tryCatch({
 }, error = function(err) { cat("  error: ", conditionMessage(err), "\n\n"); NULL })
 
 # ---- verdict ----------------------------------------------------------------
-hr("="); cat("VERDICT\n"); hr("=")
+.hr("="); cat("VERDICT\n"); .hr("=")
 
 if (is.null(new_bh) || is.null(old_bh)) {
   cat("  Could not compare -- one of the two paths did not return data.\n")
@@ -138,6 +138,6 @@ cat("\n  Note: this compares temperature because its diurnal cycle is\n")
 cat("  unambiguous. Every other hourly variable inherits the same `hour`,\n")
 cat("  so whatever is true here is true for all of them.\n")
 
-hr("=")
+.hr("=")
 cat("Transcript: ", LOG_FILE, "\n", sep = "")
 sink(NULL)

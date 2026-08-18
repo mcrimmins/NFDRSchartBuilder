@@ -45,12 +45,12 @@ start_date <- end_date - DAYS_BACK
 TEST    <- list()
 .results <- character(0)
 
-hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
+.hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
 
 run_stage <- function(id, title, expr) {
-  hr()
+  .hr()
   cat("STAGE ", id, ": ", title, "\n", sep = "")
-  hr()
+  .hr()
   t0  <- Sys.time()
   out <- tryCatch(
     {
@@ -510,9 +510,9 @@ if (isTRUE(RUN_LIMIT_PROBE)) {
 # ==============================================================================
 # Summary
 # ==============================================================================
-hr("=")
+.hr("=")
 cat("SUMMARY\n")
-hr("=")
+.hr("=")
 if (length(.results) == 0) {
   cat("  (no stages ran)\n")
 } else {
@@ -525,6 +525,6 @@ cat("Transcript written to ", LOG_FILE, "\n", sep = "")
 if (file.exists("tests/logs/fems_schema.json")) {
   cat("Schema written to fems_schema.json\n")
 }
-hr("=")
+.hr("=")
 
 sink(NULL)

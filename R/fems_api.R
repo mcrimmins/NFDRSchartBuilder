@@ -26,8 +26,17 @@
 # query returning nested objects rather than flat scalar columns).
 # ==============================================================================
 
-library(httr)
-library(jsonlite)
+# NOTE: do NOT attach httr or jsonlite here.
+#
+# app.R attaches shiny first, then sources this file. Attaching jsonlite at
+# that point puts it ahead of shiny on the search path, and jsonlite exports
+# validate() -- which masks shiny::validate() and breaks every
+# validate(need(...)) guard in the app with "is.character(txt) is not TRUE".
+# httr is attached by app.R already and is left alone for the same reason.
+#
+# Every httr and jsonlite call in this file is namespace-qualified, so nothing
+# needs attaching. dplyr and tibble are attached because fems_download.R uses
+# their verbs and the pipe unqualified, and app.R attaches them anyway.
 library(tibble)
 library(dplyr)
 

@@ -45,10 +45,10 @@ RUN_F <- FALSE          # slow: full period of record
 end_date <- Sys.Date()
 
 PROBE <- list()
-hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
+.hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
 
 probe <- function(id, title, expr) {
-  hr(); cat("PROBE ", id, ": ", title, "\n", sep = ""); hr()
+  .hr(); cat("PROBE ", id, ": ", title, "\n", sep = ""); .hr()
   t0 <- Sys.time()
   out <- tryCatch(force(expr), error = function(e) {
     cat("\n  [ERROR] ", conditionMessage(e), "\n", sep = ""); NULL
@@ -315,8 +315,8 @@ if (RUN_F) probe("F-fullpor", "Full POR pull for one station (timing)", {
 })
 
 
-hr("=")
+.hr("=")
 cat("PROBES COMPLETE -- results in the list `PROBE`\n")
 cat("Transcript: ", LOG_FILE, "\n", sep = "")
-hr("=")
+.hr("=")
 sink(NULL)

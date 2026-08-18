@@ -31,7 +31,7 @@ RUN_1 <- TRUE    # where does the time actually go?
 RUN_2 <- TRUE    # page size at full-POR scale
 RUN_3 <- TRUE    # old CSV path vs new GraphQL path -- the 1300LST question
 
-hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
+.hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
 B <- list()
 
 sink(LOG_FILE, split = TRUE)
@@ -44,7 +44,7 @@ cat("FEMS re-benchmark --", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n")
 # hand over the bytes, and how long R takes to turn them into a data frame.
 # ==============================================================================
 if (RUN_1) {
-  hr(); cat("PROBE 1: network vs parse, single 25k-row page\n"); hr()
+  .hr(); cat("PROBE 1: network vs parse, single 25k-row page\n"); .hr()
 
   q <- '
     query Timing($fuelModels: String!, $stationIds: String,
@@ -105,7 +105,7 @@ if (RUN_1) {
 # 25,000/page is 8 round trips, 100,000/page is 2.
 # ==============================================================================
 if (RUN_2) {
-  hr(); cat("PROBE 2: full-POR page size (NFDRS only, one station)\n"); hr()
+  .hr(); cat("PROBE 2: full-POR page size (NFDRS only, one station)\n"); .hr()
 
   res <- data.frame()
   for (pp in c(25000, 100000, 300000)) {
@@ -141,7 +141,7 @@ if (RUN_2) {
 # than sourcing the whole file.
 # ==============================================================================
 if (RUN_3) {
-  hr(); cat("PROBE 3: old CSV path vs new GraphQL path -- is 'hour' local?\n"); hr()
+  .hr(); cat("PROBE 3: old CSV path vs new GraphQL path -- is 'hour' local?\n"); .hr()
 
   s <- Sys.Date() - 30
   e <- Sys.Date()
@@ -195,8 +195,8 @@ if (RUN_3) {
   cat("\n")
 }
 
-hr("=")
+.hr("=")
 cat("COMPLETE -- results in `B`\n")
 cat("Transcript: ", LOG_FILE, "\n", sep = "")
-hr("=")
+.hr("=")
 sink(NULL)

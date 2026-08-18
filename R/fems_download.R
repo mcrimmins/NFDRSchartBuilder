@@ -140,6 +140,51 @@ FEMS_PER_PAGE <- 100000
 }
 
 # ------------------------------------------------------------------
+# WHY THE STATION LOOP (do not "optimize" this back into one request)
+#
+# FEMS rejects a local-station-time query spanning more than one station:
+#
+#     "Querying in local station time is only allowed for one station"
+#
+# which is reasonable -- stations sit in different time zones, so one
+# response could not carry a single consistent local clock. Local time is
+# exactly what makes date/hour correct here, so stations are requested one
+# at a time and the results bound together.
+#
+# `progress`, when supplied, is called as progress(i, n, station_id) before
+# each station so a Shiny caller can report which one is downloading.
+# Stations that return nothing are recorded in attr(out, "failed_stations").
+# ------------------------------------------------------------------
+.fetch_by_station <- function(ids, fetch_one, label, progress = NULL, verbose = TRUE) {
+  parts  <- list()
+  failed <- character(0)
+
+  for (i in seq_along(ids)) {
+    if (is.function(progress)) progress(i, length(ids), ids[i])
+    if (isTRUE(verbose)) message("  ", label, " station ", ids[i],
+                                 " (", i, " of ", length(ids), ")")
+
+    one <- tryCatch(fetch_one(ids[i]), error = function(e) {
+      warning(label, " download failed for station ", ids[i], ": ",
+              conditionMessage(e), call. = FALSE)
+      NULL
+    })
+
+    if (!is.null(one) && nrow(one) > 0) {
+      parts[[length(parts) + 1]] <- one
+    } else {
+      failed <- c(failed, ids[i])
+    }
+  }
+
+  if (length(parts) == 0) return(NULL)
+
+  out <- dplyr::bind_rows(parts)
+  attr(out, "failed_stations") <- failed
+  out
+}
+
+# ------------------------------------------------------------------
 # NFDRS
 # ------------------------------------------------------------------
 fems_download_nfdrs <- function(station_ids,
@@ -147,9 +192,21 @@ fems_download_nfdrs <- function(station_ids,
                                 end_date,
                                 fuel_model = "Y",
                                 per_page   = FEMS_PER_PAGE,
+                                progress   = NULL,
                                 verbose    = TRUE) {
 
-  ids <- .station_ids_arg(station_ids)
+  ids_vec <- unique(as.character(station_ids))
+
+  if (length(ids_vec) > 1) {
+    return(.fetch_by_station(
+      ids_vec,
+      function(id) fems_download_nfdrs(id, start_date, end_date,
+                                       fuel_model = fuel_model,
+                                       per_page = per_page, verbose = verbose),
+      label = "NFDRS", progress = progress, verbose = verbose))
+  }
+
+  ids <- .station_ids_arg(ids_vec)
 
   raw <- fems_gql_paged(
     .Q_NFDRS,
@@ -211,9 +268,23 @@ fems_download_weather <- function(station_ids,
                                   start_date,
                                   end_date,
                                   per_page = FEMS_PER_PAGE,
+                                  progress = NULL,
                                   verbose  = TRUE) {
 
-  ids <- .station_ids_arg(station_ids)
+  ids_vec <- unique(as.character(station_ids))
+
+  # weatherObs takes no dateTimeFormat argument, so it may well accept several
+  # stations at once. It is looped anyway: one code path, uniform progress
+  # reporting, and no reliance on an untested asymmetry between the two feeds.
+  if (length(ids_vec) > 1) {
+    return(.fetch_by_station(
+      ids_vec,
+      function(id) fems_download_weather(id, start_date, end_date,
+                                         per_page = per_page, verbose = verbose),
+      label = "Weather", progress = progress, verbose = verbose))
+  }
+
+  ids <- .station_ids_arg(ids_vec)
 
   raw <- fems_gql_paged(
     .Q_WEATHER,

@@ -26,7 +26,7 @@ RUN_1 <- TRUE    # page-size sweep on a 1-year pull
 RUN_2 <- TRUE    # full period of record, one station   (the slow one)
 RUN_3 <- TRUE    # validate the output contract
 
-hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
+.hr <- function(ch = "-") cat(strrep(ch, 78), "\n", sep = "")
 BENCH <- list()
 
 sink(LOG_FILE, split = TRUE)
@@ -40,7 +40,7 @@ cat("FEMS download-layer benchmark --", format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
 # once one page holds everything.
 # ==============================================================================
 if (RUN_1) {
-  hr(); cat("PROBE 1: page size sweep, 1 year of NFDRS\n"); hr()
+  .hr(); cat("PROBE 1: page size sweep, 1 year of NFDRS\n"); .hr()
 
   s <- Sys.Date() - 365
   res <- data.frame()
@@ -75,7 +75,7 @@ if (RUN_1) {
 # rows plus a comparable number of weather rows.
 # ==============================================================================
 if (RUN_2) {
-  hr(); cat("PROBE 2: full POR pull (2005 -> today+7), one station\n"); hr()
+  .hr(); cat("PROBE 2: full POR pull (2005 -> today+7), one station\n"); .hr()
 
   best <- if (!is.null(BENCH$page_sweep)) {
     ok <- BENCH$page_sweep[BENCH$page_sweep$ok, ]
@@ -123,7 +123,7 @@ if (RUN_2) {
 # misnamed, the variable selector silently drops them and charts go blank.
 # ==============================================================================
 if (RUN_3 && !is.null(BENCH$full)) {
-  hr(); cat("PROBE 3: does the output satisfy what app.R expects?\n"); hr()
+  .hr(); cat("PROBE 3: does the output satisfy what app.R expects?\n"); .hr()
 
   d <- BENCH$full
 
@@ -197,11 +197,11 @@ if (RUN_3 && !is.null(BENCH$full)) {
   cat("\n")
 }
 
-hr("=")
+.hr("=")
 cat("BENCHMARK COMPLETE -- results in `BENCH`\n")
 if (!is.null(BENCH$full_secs)) {
   cat("Full POR for one station took ", BENCH$full_secs, "s.\n", sep = "")
 }
 cat("Transcript: ", LOG_FILE, "\n", sep = "")
-hr("=")
+.hr("=")
 sink(NULL)
