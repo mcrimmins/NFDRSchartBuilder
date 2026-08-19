@@ -223,43 +223,35 @@ ui <- fluidPage(
         tabPanel("About",
                  div(style = "padding: 20px; max-width: 900px;",
                      
-                     # Title with Dev Sandbox Tag
-                     h3("🔥 NFDRSv4 Chart Builder ", span(style='color:#d9534f; font-size:0.6em; font-weight:normal;', "(Dev Sandbox Version)")),
-                     p("The NFDRSv4 Chart Builder is an interactive tool for visualizing daily fire weather indices, meteorological variables, and percentile climatologies from the National Fire Danger Rating System (NFDRS)."),
+                     h3("🔥 NFDRSv4 Chart Builder"),
+                     p("An interactive tool for visualizing daily fire weather indices, meteorological variables, and percentile climatologies from the National Fire Danger Rating System (NFDRS). This is an experimental product -- corrections and suggestions are welcome through the Submit Feedback tab."),
                      
                      hr(style = "margin-top: 20px; margin-bottom: 20px;"),
                      
                      h4("🛠️ How to Use"),
                      tags$ol(
-                       tags$li("Use the map or dropdown to select one or more stations (select/deselect stations using map or dropdown)."),
-                       tags$li("Select a fuel model available through FEMS (Y or Z)."),
-                       tags$li("Choose a variable to analyze. Options dynamically update based on the fetched data and include NFDRS indices (e.g., ERC, BI, KBDI, Fuel Moistures) as well as weather variables (e.g., Temperature, RH, Wind Speed, VPD, HDW)."),
-                       tags$li("Pick a daily summary statistic (mean, min, or max) and a target year. ", tags$b("Note:"), " Certain computed variables like Precipitation and Burn Period automatically bypass this selection and compute daily totals/accumulations."),
-                       tags$li("Adjust the ", tags$b("Month Range Slider"), " to focus the plots and anomaly tables on a specific season (e.g., March to June)."),
-                       tags$li("Click 'Fetch Station Data' to download from the API. ",
-                               tags$b("Note: "), "If you change your station or fuel model later, the button will turn red and warn you to fetch the newly requested data to keep the charts accurate."),
-                       tags$li("View visualizations in either the static or interactive plot tabs, or check the ",
-                               tags$b("Summary Stats"), " tab for an anomaly table comparing your selected period to the historical baseline.")
-                     ),
-                     
-                     hr(style = "margin-top: 20px; margin-bottom: 20px;"),
-                     
-                     h4("✨ What's New (Spring 2025)"),
-                     tags$ul(
-                       tags$li(tags$b("Computed Variables:"), " Added custom metrics including ", tags$i("Burn Period"), " (hours per day with RH < 20%) and ", tags$i("Cumulative Precipitation"), "."),
-                       tags$li(tags$b("Interactive Plotly Charts:"), " Hover over the new interactive plot tab to see exact values, historical percentiles, and spaghetti plots of individual past years."),
-                       tags$li(tags$b("Seasonal Filtering:"), " A new month-range slider allows you to crop plots and recalculate the Summary Stats table for targeted timeframes.")
+                       tags$li("Select one or more stations from the map or the dropdown. Multiple stations are averaged into a single series."),
+                       tags$li("Choose a fuel model (Y or Z) and click ", tags$b("Fetch Station Data"), ". If you change the station or fuel model afterwards, the button turns red until you fetch again."),
+                       tags$li("Pick a variable. The list reflects what was fetched, and covers NFDRS indices (ERC, BI, KBDI, fuel moistures) as well as weather variables (temperature, RH, wind, VPD, HDW)."),
+                       tags$li("Pick a daily statistic and a year. ", tags$b("Note:"), " Precipitation and Burn Period ignore the statistic and compute daily totals or hour counts instead."),
+                       tags$li("Use the ", tags$b("Month Range"), " slider to focus on a season. The Summary Stats table recalculates to match."),
+                       tags$li("Optionally tick ", tags$b("Overlay a smoothed line"), " to lay a rolling filter over the selected year. How it behaves at the ends of the series is described below.")
                      ),
                      
                      hr(style = "margin-top: 20px; margin-bottom: 20px;"),
                      
                      h4("📊 Data & Methodology"),
-                     p("All historical observation and forecast data is fetched directly from the ",
+                     p("All observations and forecasts come from the ",
                        tags$a(href="https://fems.fs2c.usda.gov/api/", target="_blank", "USDA Forest Service FEMS API"), "."),
                      tags$ul(
-                       tags$li(tags$b("Historical Baseline:"), " Percentile ribbons, dashed global thresholds, and normal averages are calculated using an 18-year baseline period from ", tags$b("2005 to 2025"), "."),
-                       tags$li(tags$b("Derived Metrics:"), " While standard NFDRS indices are calculated via FEMS, custom weather aggregates (like cumulative totals) are computed locally by this application from the raw hourly meteorological feeds.")
-                     )
+                       tags$li(tags$b("Historical baseline:"), " Percentile ribbons, dashed thresholds and the normal average use a 21-year baseline, ", tags$b("2005 to 2025"), "."),
+                       tags$li(tags$b("Derived metrics:"), " Standard NFDRS indices come from FEMS. Burn Period (hours per day with RH below 20%) and cumulative precipitation are computed here from the hourly weather feed."),
+                       tags$li(tags$b("Smoothed line:"), " The optional overlay applies a rolling mean, sum or median to the selected year's observed values only -- the climatology mean and the percentile bands are never smoothed. The unsmoothed daily series stays visible as a thin grey line, and the filter in use is named in the plot subtitle."),
+                       tags$li(tags$b("Smoothing at the ends:"), " A smoothed value appears only where a complete window of observations exists. A centered window therefore stops short of the most recent day by half its width, so a 31-day centered mean ends about 15 days back. Choose a trailing window if you need the line to reach today, accepting that it lags behind a change. Gaps in the record are left blank rather than filled from a partial window.")
+                     ),
+                     
+                     p(style = "color: #888; font-size: 0.85em; margin-top: 20px;",
+                       "Last updated August 2026.")
                  )
         ),
         
