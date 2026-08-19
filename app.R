@@ -164,6 +164,32 @@ ui <- fluidPage(
       
       checkboxInput("show_forecast", "Plot Current Forecast", value = TRUE),
       
+      # --- SMOOTHED OVERLAY ---
+      checkboxInput("smooth_on", "Overlay a smoothed line", value = FALSE),
+      
+      conditionalPanel(
+        condition = "input.smooth_on == true",
+        div(
+          style = "margin-left: 12px; padding-left: 12px; border-left: 3px solid #ddd;",
+          
+          selectInput("smooth_fun", "Filter",
+                      choices = c("Rolling mean" = "mean",
+                                  "Rolling sum" = "sum",
+                                  "Rolling median" = "median"),
+                      selected = "mean"),
+          
+          radioButtons("smooth_align", "Window position",
+                       choices = c("Centered" = "center", "Trailing" = "right"),
+                       selected = "center", inline = TRUE),
+          
+          # Odd widths only, so a centered window is symmetric about its day.
+          sliderInput("smooth_window", "Window (days)",
+                      min = 3, max = 61, value = 7, step = 2),
+          
+          uiOutput("smooth_note")
+        )
+      ),
+      
       hr(style = "margin-top: 20px; margin-bottom: 20px;"),
       
       # --- FOOTER ---
@@ -511,8 +537,53 @@ server <- function(input, output, session) {
   # that tests/ can call it without a Shiny session.
   daily_series <- reactive({
     req(all_data_cache(), input$variable, input$daily_stat, input$month_range)
-    build_daily_series(all_data_cache(), input$variable, input$daily_stat,
-                       input$month_range)
+    build_daily_series(
+      all_data_cache(), input$variable, input$daily_stat, input$month_range,
+      smooth        = isTRUE(input$smooth_on),
+      smooth_fun    = input$smooth_fun    %||% "mean",
+      smooth_window = input$smooth_window %||% 7,
+      smooth_align  = input$smooth_align  %||% "center"
+    )
+  })
+  
+  # A rolling SUM of an already-cumulative series is meaningless, so it is taken
+  # off the menu for Cumulative Precipitation rather than left there to be
+  # picked by accident.
+  observeEvent(input$variable, {
+    full    <- c("Rolling mean" = "mean", "Rolling sum" = "sum", "Rolling median" = "median")
+    allowed <- if (identical(input$variable, "precip_cum")) full[full != "sum"] else full
+    keep    <- if (isTRUE(input$smooth_fun %in% allowed)) input$smooth_fun else "mean"
+    updateSelectInput(session, "smooth_fun", choices = allowed, selected = keep)
+  }, ignoreNULL = TRUE)
+  
+  # Spell out what the current settings cost, so nobody has to work out for
+  # themselves why the smoothed line stops short of today.
+  output$smooth_note <- renderUI({
+    req(input$smooth_window, input$smooth_align)
+    lag <- (as.integer(input$smooth_window) - 1L) %/% 2L
+    msg <- if (identical(input$smooth_align, "center")) {
+      paste0("Centered: the line stops ", lag, " days short of each end, today included. ",
+             "Edges are left blank rather than computed from a partial window.")
+    } else {
+      paste0("Trailing: the window ends on the plotted day, so the line reaches today ",
+             "but lags a turn by about ", lag, " days.")
+    }
+    extra <- if (identical(input$variable, "precip_cum")) {
+      " Rolling sum is unavailable here -- the series is already a running total."
+    } else ""
+    div(style = "font-size: 0.8em; color: #666; line-height: 1.35; margin-top: -8px;",
+        msg, extra)
+  })
+  
+  # Human-readable description of the active filter, e.g. "33-day centered
+  # median", or NULL when smoothing is off. Lives in the subtitle of the static
+  # plot and the axis label of the interactive one, so a saved image says what
+  # was done to the line without the legend having to carry it.
+  smooth_spec <- reactive({
+    if (!isTRUE(input$smooth_on)) return(NULL)
+    paste0(input$smooth_window %||% 7, "-day ",
+           if (identical(input$smooth_align %||% "center", "center")) "centered" else "trailing",
+           " ", input$smooth_fun %||% "mean")
   })
   
   # Plot rendering
@@ -564,7 +635,8 @@ server <- function(input, output, session) {
     })
     
     df_current_obs <- all_data_sig %>% filter(year == input$plot_year, record_type == "O") %>%
-      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE),
+                                        value_smooth = first(value_smooth), .groups = "drop")
     df_current_fcst <- all_data_sig %>% filter(year == input$plot_year, record_type == "F") %>%
       group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
     
@@ -572,8 +644,12 @@ server <- function(input, output, session) {
     moisture_fill <- c("0–33%" = "#ff9933", "33–66%" = "#ffcc80", "66–90%" = "#ffe0b2", "90–97%" = "#e6f2ff", "97–100%" = "#cce5ff")
     fill_values <- if (input$variable %in% reverse_fill_vars) moisture_fill else default_fill
     
+    # The legend key stays short; the filter is spelled out in the subtitle so
+    # it does not squeeze the plot panel.
+    obs_label <- paste0(input$plot_year, " Observed")
+    
     color_mapping <- setNames(c("blue", "orangered", "forestgreen"),
-                              c("Mean", paste0(input$plot_year, " Observed"), paste0(input$plot_year, " Forecast")))
+                              c("Mean", obs_label, paste0(input$plot_year, " Forecast")))
     
     # Hide the daily_stat suffix for our total/count variables
     y_axis_label <- if (input$variable %in% c("precip_total", "burn_period", "precip_cum")) {
@@ -600,10 +676,16 @@ server <- function(input, output, session) {
           paste0(pretty_variable_name(input$variable), " (Fuel Model ", fetched_fuel_model(), ")")
         },
         subtitle = paste0(station_label, " | ", input$plot_year,
-                          " vs Climatology (", historical_years$start_year, "–", historical_years$end_year, ")"),
+                          " vs Climatology (", historical_years$start_year, "–", historical_years$end_year, ")",
+                          if (is.null(smooth_spec())) "" else paste0(" | ", smooth_spec())),
         x = "Month-Day",
         y = y_axis_label,
-        caption = "EXPERIMENTAL PRODUCT -- University of Arizona -- Data from FEMS-API"
+        caption = if (is.null(smooth_spec())) {
+          "EXPERIMENTAL PRODUCT -- University of Arizona -- Data from FEMS-API"
+        } else {
+          paste0("Thin grey line: unsmoothed daily values.  ",
+                 "EXPERIMENTAL PRODUCT -- University of Arizona -- Data from FEMS-API")
+        }
       ) +
       #... your existing ggplot code ... +
       annotation_custom(
@@ -613,7 +695,19 @@ server <- function(input, output, session) {
       theme_bw(base_size = 14)
     
     if (nrow(df_current_obs) > 0) {
-      p <- p + geom_line(data = df_current_obs, aes(x = month_day, y = value, color = paste0(input$plot_year, " Observed")), linewidth = 1.2)
+      if (isTRUE(input$smooth_on)) {
+        # The raw series stays visible underneath so the smoothing reads as
+        # smoothing. Neutral grey, and its colour is set OUTSIDE aes() so it
+        # neither fights the orange percentile bands nor adds a legend row.
+        p <- p + geom_line(data = df_current_obs,
+                           aes(x = month_day, y = value),
+                           colour = "gray30", linewidth = 0.35, alpha = 0.65) +
+                 geom_line(data = filter(df_current_obs, !is.na(value_smooth)),
+                           aes(x = month_day, y = value_smooth, color = obs_label),
+                           linewidth = 1.4)
+      } else {
+        p <- p + geom_line(data = df_current_obs, aes(x = month_day, y = value, color = obs_label), linewidth = 1.2)
+      }
     }
     if (input$show_forecast && nrow(df_current_fcst) > 0) {
       p <- p + geom_line(data = df_current_fcst, aes(x = month_day, y = value, color = paste0(input$plot_year, " Forecast")), linewidth = 1.2, linetype = "solid")
@@ -641,8 +735,12 @@ server <- function(input, output, session) {
       mutate(text = paste("Date:", format(month_day, "%b-%d"), "<br>Mean:", round(mean, 1)))
     
     df_current_obs <- all_data_sig %>% filter(year == input$plot_year, record_type == "O") %>%
-      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
-      mutate(text = paste("Date:", format(month_day, "%b-%d"), "<br>Observed:", round(value, 1)))
+      group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE),
+                                        value_smooth = first(value_smooth), .groups = "drop") %>%
+      mutate(text    = paste0("Date: ", format(month_day, "%b-%d"),
+                              "<br>Observed: ", round(value, 1)),
+             text_sm = paste0("Date: ", format(month_day, "%b-%d"),
+                              "<br>Smoothed: ", round(value_smooth, 1)))
     
     df_current_fcst <- all_data_sig %>% filter(year == input$plot_year, record_type == "F") %>%
       group_by(month_day) %>% summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
@@ -697,10 +795,25 @@ server <- function(input, output, session) {
       scale_fill_manual("Daily %tile Range", values = fill_values) +
       scale_color_manual("Legend", values = color_values) +
       theme_bw(base_size = 14) +
-      labs(x = "Month-Day", y = y_axis_label)
+      labs(x = if (is.null(smooth_spec())) "Month-Day" else
+             paste0("Month-Day   (bold line: ", smooth_spec(),
+                    "; grey line: unsmoothed daily values)"),
+           y = y_axis_label)
     
     if (nrow(df_current_obs) > 0) {
-      p <- p + geom_line(data = df_current_obs, aes(x = month_day, y = value, group = 1, color = !!obsYr, text = text), linewidth = 1)
+      if (isTRUE(input$smooth_on)) {
+        # Raw series in neutral grey, outside the colour scale so it adds no
+        # legend row. The two traces carry DIFFERENT hover text so the unified
+        # tooltip reads "Observed" once and "Smoothed" once, not both twice.
+        p <- p + geom_line(data = df_current_obs,
+                           aes(x = month_day, y = value, group = 1, text = text),
+                           colour = "gray30", linewidth = 0.35, alpha = 0.65) +
+                 geom_line(data = filter(df_current_obs, !is.na(value_smooth)),
+                           aes(x = month_day, y = value_smooth, group = 1, color = !!obsYr, text = text_sm),
+                           linewidth = 1.3)
+      } else {
+        p <- p + geom_line(data = df_current_obs, aes(x = month_day, y = value, group = 1, color = !!obsYr, text = text), linewidth = 1)
+      }
     }
     if (input$show_forecast && nrow(df_current_fcst) > 0) {
       p <- p + geom_line(data = df_current_fcst, aes(x = month_day, y = value,group = 1, color = !!fcstYr, text = text), linewidth = 1, linetype = "solid")
@@ -828,7 +941,14 @@ server <- function(input, output, session) {
   # ---------------------------------------------------------------------
   output$download_plot_data <- downloadHandler(
     filename = function() {
-      paste0("NFDRS_", input$variable, "_", input$daily_stat, "_", input$plot_year, ".csv")
+      # The smoothing spec goes in the name so two downloads with different
+      # windows do not overwrite each other in the Downloads folder.
+      sm <- if (isTRUE(input$smooth_on)) {
+        paste0("_smooth", input$smooth_window,
+               if (identical(input$smooth_align, "center")) "c" else "t",
+               substr(input$smooth_fun, 1, 3))
+      } else ""
+      paste0("NFDRS_", input$variable, "_", input$daily_stat, "_", input$plot_year, sm, ".csv")
     },
     content = function(file) {
       # Require the data to be fetched first
@@ -853,11 +973,15 @@ server <- function(input, output, session) {
           .groups = "drop"
         )
       
-      # Current Year Observed
+      # Current Year Observed. The smoothed column is always present so the CSV
+      # schema does not change between downloads; it is simply empty when
+      # smoothing is switched off.
       df_obs <- all_data_sig %>%
         filter(year == input$plot_year, record_type == "O") %>%
         group_by(month_day) %>%
-        summarise(Current_Observed = round(mean(value, na.rm = TRUE), 2), .groups = "drop")
+        summarise(Current_Observed = round(mean(value, na.rm = TRUE), 2),
+                  Current_Observed_Smoothed = round(first(value_smooth), 2),
+                  .groups = "drop")
       
       # Current Year Forecast
       df_fcst <- all_data_sig %>%
@@ -870,7 +994,7 @@ server <- function(input, output, session) {
         left_join(df_obs, by = "month_day") %>%
         left_join(df_fcst, by = "month_day") %>%
         mutate(Date = format(month_day, "%b-%d")) %>%
-        select(Date, Historical_Mean, Min_0, Pct_33, Pct_66, Pct_90, Pct_97, Max_100, Current_Observed, Current_Forecast)
+        select(Date, Historical_Mean, Min_0, Pct_33, Pct_66, Pct_90, Pct_97, Max_100, Current_Observed, Current_Observed_Smoothed, Current_Forecast)
       
       # Write the CSV
       write.csv(final_data, file, row.names = FALSE, na = "")
