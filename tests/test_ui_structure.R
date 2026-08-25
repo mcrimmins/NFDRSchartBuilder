@@ -168,13 +168,56 @@ if (is.null(.ui)) {
                    "\" -- the sidebar's conditionalPanel will never show"))
 
 # ------------------------------------------------------------ tab titles ----
+#
+# Read the tab titles out of the TAG TREE, not out of the rendered HTML string.
+#
+# The first version of this test scraped data-value="..." out of
+# as.character(ui) with gregexpr()/regmatches(). It passed on Linux and failed
+# on Windows, returning shredded names like 'ata-value="Static Plot">'. app.R
+# carries emoji in the sidebar headers and the About tab, and regmatches()
+# slices by offsets that stop lining up with the string once multibyte
+# characters are in it, so every match after the first emoji came back shifted
+# by a character. The tab values were never wrong -- the extraction was.
+#
+# Walking the tree has no offsets to get wrong. Each tabPanel contributes a nav
+# <a data-value="..."> and a pane <div data-value="...">, so restricting to <a>
+# yields exactly one entry per tab, already in document order.
+
+.collect_tab_values <- function(x, acc = character(0)) {
+  if (inherits(x, "shiny.tag")) {
+    v <- x$attribs[["data-value"]]
+    if (!is.null(v) && identical(x$name, "a")) acc <- c(acc, as.character(v))
+    acc <- .collect_tab_values(x$children, acc)
+  } else if (is.list(x)) {
+    for (el in x) acc <- .collect_tab_values(el, acc)
+  }
+  acc
+}
+
+# Fallback, in case a future Bootstrap version stops putting data-value on the
+# nav anchor: take every data-value in tree order and de-duplicate.
+.collect_any_tab_values <- function(x, acc = character(0)) {
+  if (inherits(x, "shiny.tag")) {
+    v <- x$attribs[["data-value"]]
+    if (!is.null(v)) acc <- c(acc, as.character(v))
+    acc <- .collect_any_tab_values(x$children, acc)
+  } else if (is.list(x)) {
+    for (el in x) acc <- .collect_any_tab_values(el, acc)
+  }
+  acc
+}
 
 .say("")
 .say("tabs are as expected, in order")
 
-.tabs <- regmatches(.html, gregexpr('data-value="[^"]*"', .html))[[1]]
-.tabs <- unique(sub('"$', "", sub('data-value="', "", .tabs)))
+.tabs <- .collect_tab_values(.ui)
+.via  <- "nav anchors"
+if (length(.tabs) == 0L) {
+  .tabs <- unique(.collect_any_tab_values(.ui))
+  .via  <- "all data-value attributes, de-duplicated"
+}
 
+.say("  read from the tag tree via ", .via)
 .say("  found ", length(.tabs), ":")
 for (i in seq_along(.tabs)) .say("    ", i, ". ", .tabs[i])
 
