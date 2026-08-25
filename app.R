@@ -63,6 +63,8 @@ library(grid)
 # ------------------------------------------------------------------
 source("R/fems_download.R")
 source("R/daily_series.R")
+source("R/multi_series.R")
+source("R/multi_series_plot.R")
 
 # Start of the fetch window. 2005 rather than the previous 2004 because the
 # climatology baseline, the plot-year input, and every downstream filter all
@@ -150,7 +152,19 @@ ui <- fluidPage(
       # --- PLOT SETTINGS GROUP ---
       h4("📈 Plot Settings", style = "margin-bottom: 15px; font-weight: bold; font-size: 1.1em; color: #444;"),
       
-      uiOutput("variable_selector"),
+      # The single-variable selector and the Compare Variables pair are
+      # mutually exclusive. Leaving the main selector visible on that tab
+      # would put a live control on screen that changes nothing you can see,
+      # which reads as a bug. Daily Statistic and the month slider stay
+      # visible on both, because those genuinely do apply to both.
+      conditionalPanel(
+        condition = "input.main_tabs != 'Compare Variables'",
+        uiOutput("variable_selector")
+      ),
+      conditionalPanel(
+        condition = "input.main_tabs == 'Compare Variables'",
+        uiOutput("multi_variable_selectors")
+      ),
       
       selectInput("daily_stat", "Daily Statistic",
                   choices = c("mean", "min", "max", "1300LST")),
@@ -521,7 +535,11 @@ server <- function(input, output, session) {
   
   weather_vars <- unname(weather_var_labels)
   
-  output$variable_selector <- renderUI({
+  # The label/value list of variables the fetched data can actually support.
+  # Extracted from output$variable_selector unchanged so that the single-
+  # variable selector and the Compare Variables pair cannot drift apart -- two
+  # copies of this logic is how the aggregation chain went wrong three ways.
+  available_variables <- reactive({
     req(all_data_cache())
     raw_available <- names(all_data_cache())[sapply(all_data_cache(), is.numeric)]
     
@@ -530,9 +548,68 @@ server <- function(input, output, session) {
     if ("relativeHumidity" %in% raw_available) raw_available <- c(raw_available, "burn_period")
     
     display_vars <- c(nfdrs_labels, weather_var_labels)
-    display_vars <- display_vars[display_vars %in% raw_available]
+    display_vars[display_vars %in% raw_available]
+  })
+  
+  output$variable_selector <- renderUI({
+    display_vars <- available_variables()
     selectInput("variable", "Select Variable", choices = display_vars, selected = display_vars[1])
   })
+  
+  # --- Compare Variables: slot A (left axis) and slot B (right axis) -------
+  # Same choices as the main selector, by construction. Each label carries a
+  # colour chip matching the axis it will drive, and names the axis in words
+  # as well, so identity never rests on colour alone.
+  output$multi_variable_selectors <- renderUI({
+    display_vars <- available_variables()
+    validate(need(length(display_vars) > 0,
+                  "No variables available -- fetch station data first."))
+    
+    a_default <- unname(display_vars)[1]
+    b_default <- if ("relativeHumidity" %in% display_vars &&
+                     !identical(a_default, "relativeHumidity")) {
+      "relativeHumidity"
+    } else {
+      alt <- setdiff(unname(display_vars), a_default)
+      if (length(alt) > 0) alt[1] else a_default
+    }
+    
+    tagList(
+      selectInput("multi_var_a",
+                  multi_series_swatch_label("First variable (left axis)",
+                                            MULTI_SERIES_COLORS[["a"]]),
+                  choices = display_vars, selected = a_default),
+      selectInput("multi_var_b",
+                  multi_series_swatch_label("Second variable (right axis)",
+                                            MULTI_SERIES_COLORS[["b"]]),
+                  choices = display_vars, selected = b_default)
+    )
+  })
+  
+  # Slot A is seeded from the main Variable selector ONCE, the first time the
+  # tab is opened, and then left alone. Binding it live would make the tab
+  # jump under the user every time they touched the main selector elsewhere;
+  # never seeding it would ignore the variable they were just looking at.
+  multi_seeded <- reactiveVal(FALSE)
+  
+  observeEvent(input$main_tabs, {
+    if (!identical(input$main_tabs, "Compare Variables")) return()
+    if (isTRUE(multi_seeded())) return()
+    req(input$variable, input$multi_var_a)
+    multi_seeded(TRUE)
+    if (identical(input$variable, input$multi_var_a)) return()
+    
+    updateSelectInput(session, "multi_var_a", selected = input$variable)
+    
+    # Do not let the seed land on slot B and collapse the plot to a single
+    # series the first time the tab is opened.
+    if (identical(input$variable, input$multi_var_b)) {
+      alt <- setdiff(unname(available_variables()), input$variable)
+      if (length(alt) > 0) {
+        updateSelectInput(session, "multi_var_b", selected = alt[1])
+      }
+    }
+  }, ignoreInit = TRUE)
   
   # ---------------------------------------------------------------------
   # Shared daily series

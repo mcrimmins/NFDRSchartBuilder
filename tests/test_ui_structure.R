@@ -37,6 +37,10 @@
 
 library(shiny)
 
+# Sourced for MULTI_SERIES_COLORS / MULTI_SERIES_SIDES, which the palette check
+# below asserts against. Pure constants and one tag helper -- no side effects.
+source("R/multi_series_plot.R")
+
 .OUT_DIR <- "tests/logs"
 
 # The contract. Order matters: these are the tabs, left to right.
@@ -230,6 +234,109 @@ if (!identical(.tabs, .EXPECT_TABS)) {
   for (m in setdiff(.tabs, .EXPECT_TABS)) .problems <- c(.problems, paste0("unexpected: ", m))
 }
 .check("tab titles", .problems)
+
+# ------------------------------------------- sidebar variable controls -------
+#
+# The main "Select Variable" dropdown and the Compare Variables pair are
+# mutually exclusive, gated by two conditionalPanels on input.main_tabs. This
+# is worth a test for the same reason the tabset id is: a conditionalPanel
+# whose condition never matches raises NO error. The control simply never
+# appears, and the first symptom is a sidebar that looks empty.
+#
+# What this CANNOT check: the two selectInputs themselves are built server-
+# side by renderUI, so a static pass over the ui object sees only the empty
+# uiOutput divs. That the dropdowns are populated, defaulted and swatched
+# correctly is a visual check, not this one.
+
+.collect_attr <- function(x, attr, acc = character(0)) {
+  if (inherits(x, "shiny.tag")) {
+    v <- x$attribs[[attr]]
+    if (!is.null(v)) acc <- c(acc, as.character(v))
+    acc <- .collect_attr(x$children, attr, acc)
+  } else if (is.list(x)) {
+    for (el in x) acc <- .collect_attr(el, attr, acc)
+  }
+  acc
+}
+
+.EXPECT_CONDS <- c("input.main_tabs != 'Compare Variables'",
+                   "input.main_tabs == 'Compare Variables'")
+.EXPECT_OUTPUTS <- c("variable_selector", "multi_variable_selectors")
+
+.say("")
+.say("sidebar gates the variable controls on the active tab")
+
+.conds <- .collect_attr(.ui, "data-display-if")
+.conds <- .conds[grepl("main_tabs", .conds, fixed = TRUE)]
+.say("  conditionalPanels keyed on main_tabs: ", length(.conds))
+for (c_ in .conds) .say("    ", c_)
+
+.problems <- character(0)
+if (!identical(sort(.conds), sort(.EXPECT_CONDS))) {
+  .problems <- c(.problems,
+                 paste0("expected exactly [", paste(.EXPECT_CONDS, collapse = "] and ["),
+                        "], got [", paste(.conds, collapse = "] ["), "]"))
+}
+
+.ids <- .collect_attr(.ui, "id")
+for (o in .EXPECT_OUTPUTS) {
+  present <- o %in% .ids
+  .say("  uiOutput(\"", o, "\") present: ", present)
+  if (!present) .problems <- c(.problems, paste0("no element with id=\"", o, "\""))
+}
+.check("sidebar gating", .problems)
+
+# ------------------------------------------------------ series palette -------
+#
+# The two colours double as axis TITLE and TICK LABEL colours, which is small
+# text, so they must clear WCAG AA for normal text (4.5:1) against the white
+# page -- not the 3:1 a chart mark alone would need. They must also stay
+# distinguishable from each other. Both properties are easy to break with a
+# well-meaning tweak to a hex value, and neither failure is visible to whoever
+# makes the tweak, so they are asserted here rather than trusted.
+
+.rel_lum <- function(hex) {
+  v  <- c(substr(hex, 2, 3), substr(hex, 4, 5), substr(hex, 6, 7))
+  ch <- strtoi(v, 16L) / 255
+  f  <- ifelse(ch <= 0.03928, ch / 12.92, ((ch + 0.055) / 1.055)^2.4)
+  sum(f * c(0.2126, 0.7152, 0.0722))
+}
+.contrast <- function(hex, other = "#FFFFFF") {
+  l <- sort(c(.rel_lum(hex), .rel_lum(other)), decreasing = TRUE)
+  (l[1] + 0.05) / (l[2] + 0.05)
+}
+
+.say("")
+.say("series palette clears AA for small text on white")
+
+.problems <- character(0)
+if (!exists("MULTI_SERIES_COLORS")) {
+  .problems <- "MULTI_SERIES_COLORS not found -- is R/multi_series_plot.R sourced?"
+} else {
+  if (!identical(sort(names(MULTI_SERIES_COLORS)), c("a", "b"))) {
+    .problems <- c(.problems, paste0("expected slots a and b, got [",
+                                     paste(names(MULTI_SERIES_COLORS), collapse = ", "), "]"))
+  }
+  for (s in names(MULTI_SERIES_COLORS)) {
+    hx <- MULTI_SERIES_COLORS[[s]]
+    if (!grepl("^#[0-9A-Fa-f]{6}$", hx)) {
+      .problems <- c(.problems, paste0("slot ", s, ": '", hx, "' is not a 6-digit hex colour"))
+      next
+    }
+    cr <- .contrast(hx)
+    .say("    slot ", s, " ", hx, "  contrast vs white ", sprintf("%.2f:1", cr),
+         "  (", MULTI_SERIES_SIDES[[s]], " axis)")
+    if (cr < 4.5) {
+      .problems <- c(.problems,
+                     sprintf("slot %s (%s) is %.2f:1 against white -- below the 4.5:1 AA floor for the tick labels it colours",
+                             s, hx, cr))
+    }
+  }
+  if (length(unique(unname(MULTI_SERIES_COLORS))) < length(MULTI_SERIES_COLORS)) {
+    .problems <- c(.problems, "the two slots share a colour -- the axis mapping would be unreadable")
+  }
+}
+.check("series palette", .problems)
 
 # --------------------------------------------- the new tab has its content ---
 
