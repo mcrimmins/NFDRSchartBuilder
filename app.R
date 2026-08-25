@@ -235,16 +235,13 @@ ui <- fluidPage(
                  )
         ),
         # --- Compare Variables -------------------------------------------
-        # Placeholder for the two-variable dual-axis plot. The tab exists now,
-        # ahead of its renderer, so that the tabsetPanel id above and the
-        # conditional sidebar controls can each be verified on their own
-        # rather than inside a step that is also debugging a plot.
+        # Two variables for the selected year, each against its own y-axis.
+        # No climatology ribbons here: two translucent percentile bands on
+        # independent scales recreate the false-alignment problem in fill
+        # form. The Static and Interactive tabs remain the climatology view.
         tabPanel("Compare Variables",
-                 div(style = "padding: 40px 20px; color: #666;",
-                     h4("Compare Variables"),
-                     p("Under construction. This tab will plot two variables for the",
-                       "selected year, each against its own y-axis.")
-                 )
+                 uiOutput("multi_same_note"),
+                 plotlyOutput("multi_series_plot", height = "700px")
         ),
         tabPanel("Summary Stats", DTOutput("summary_table")),
         tabPanel("About",
@@ -628,6 +625,23 @@ server <- function(input, output, session) {
     )
   })
   
+  # Same shape as daily_series() above, for the Compare Variables tab: a
+  # one-line wrapper so every rule lives in build_multi_series(). Deliberately
+  # SEPARATE from daily_series(), which stays bound to input$variable -- the
+  # two tabs read different controls and must not disturb each other.
+  multi_series <- reactive({
+    req(all_data_cache(), input$multi_var_a, input$multi_var_b,
+        input$daily_stat, input$month_range)
+    build_multi_series(
+      all_data_cache(), c(input$multi_var_a, input$multi_var_b),
+      input$daily_stat, input$month_range,
+      smooth        = isTRUE(input$smooth_on),
+      smooth_fun    = input$smooth_fun    %||% "mean",
+      smooth_window = input$smooth_window %||% 7,
+      smooth_align  = input$smooth_align  %||% "center"
+    )
+  })
+  
   # A rolling SUM of an already-cumulative series is meaningless, so it is taken
   # off the menu for Cumulative Precipitation rather than left there to be
   # picked by accident.
@@ -925,6 +939,38 @@ server <- function(input, output, session) {
         )
       )
     
+  })
+  
+  # --- Compare Variables ------------------------------------------------
+  # Both slots on the same variable is allowed rather than blocked, because
+  # blocking means the choices shift under the user mid-change. It collapses
+  # to a single series (build_multi_series() de-duplicates), so the only
+  # thing left to do is say so -- otherwise the tab silently looks broken.
+  output$multi_same_note <- renderUI({
+    req(input$multi_var_a, input$multi_var_b)
+    if (!identical(input$multi_var_a, input$multi_var_b)) return(NULL)
+    div(style = paste("margin: 8px 0 0 0; padding: 8px 12px;",
+                      "background: #fdf6e3; border-left: 3px solid #d9b45b;",
+                      "font-size: 0.9em; color: #555;"),
+        "Both dropdowns are set to ", tags$b(pretty_variable_name(input$multi_var_a)),
+        ". The Daily Statistic is shared, so the two series would be identical; ",
+        "showing one line on one axis instead. Pick a different second variable ",
+        "to compare.")
+  })
+  
+  output$multi_series_plot <- renderPlotly({
+    validate(need(!is.null(all_data_cache()), "Welcome! Please select your station(s) and click 'Fetch Station Data' to generate the chart."))
+    req(input$multi_var_a, input$multi_var_b, input$plot_year,
+        input$daily_stat, fetched_fuel_model())
+    
+    plot_multi_series(
+      multi_series(), c(input$multi_var_a, input$multi_var_b),
+      input$plot_year, input$daily_stat,
+      show_forecast = isTRUE(input$show_forecast),
+      smooth        = isTRUE(input$smooth_on),
+      smooth_spec   = smooth_spec(),
+      label_fn      = pretty_variable_name
+    )
   })
   
   output$summary_table <- renderDT({

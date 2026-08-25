@@ -340,13 +340,24 @@ if (!exists("MULTI_SERIES_COLORS")) {
 
 # --------------------------------------------- the new tab has its content ---
 
+# Was a check for the step-2 placeholder copy. Now that the renderer is wired
+# in, it checks for the plot output itself -- and that the placeholder is GONE,
+# so a half-reverted edit cannot leave both in the tab. The note above the plot
+# is rendered server-side, and only when both slots match, so its content
+# cannot be seen from here; only that its uiOutput exists.
 .say("")
-.say("Compare Variables tab carries its placeholder copy")
-.has_copy <- grepl("Under construction", .html, fixed = TRUE)
-.say("  placeholder text present: ", .has_copy)
-.check("placeholder copy",
-       if (.has_copy) character(0)
-       else "the Compare Variables tab rendered empty")
+.say("Compare Variables tab holds the plot output")
+.plot_present <- "multi_series_plot" %in% .ids
+.note_present <- "multi_same_note"   %in% .ids
+.say("  plotlyOutput(\"multi_series_plot\") present: ", .plot_present)
+.say("  uiOutput(\"multi_same_note\") present: ", .note_present)
+.problems <- character(0)
+if (!.plot_present) .problems <- c(.problems, "the Compare Variables tab has no plot output")
+if (!.note_present) .problems <- c(.problems, "the same-variable note output is missing")
+if (grepl("Under construction", .html, fixed = TRUE)) {
+  .problems <- c(.problems, "the step-2 placeholder copy is still in the tab")
+}
+.check("tab content", .problems)
 
 # ================================================================= verdict ===
 
