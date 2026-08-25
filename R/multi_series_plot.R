@@ -133,11 +133,17 @@ multi_series_axis_title <- function(variable, daily_stat, label_fn = function(v)
 #   label_fn       variable name -> display name; app.R passes
 #                  pretty_variable_name(). Injected rather than called directly
 #                  so this file has no dependency on app.R.
+#   title          headline above the chart, matching the other tabs. Passed in
+#   subtitle       rather than built here for the same reason as label_fn: the
+#                  station names, the fuel model and the variable-label lookup
+#                  all live in app.R, and this file must not reach for them.
 plot_multi_series <- function(daily, variables, plot_year, daily_stat,
                               show_forecast = TRUE,
                               smooth        = FALSE,
                               smooth_spec   = NULL,
                               label_fn      = function(v) v,
+                              title         = NULL,
+                              subtitle      = NULL,
                               colors        = MULTI_SERIES_COLORS,
                               watermark     = TRUE) {
 
@@ -250,6 +256,24 @@ plot_multi_series <- function(daily, variables, plot_year, daily_stat,
     legend    = list(orientation = "h", x = 0, y = -0.18),
     margin    = list(r = 80)
   )
+
+  # Left-aligned title with the subtitle beneath in <sup>, which is how plotly
+  # does a two-line title -- it has no subtitle argument of its own. Matches the
+  # left-aligned title/subtitle block on the Static tab. The top margin has to
+  # grow to make room, or the title sits on top of the plotting area.
+  if (!is.null(title) || !is.null(subtitle)) {
+    lay$title <- list(
+      text = paste0(
+        if (!is.null(title)) paste0("<b>", title, "</b>") else "",
+        if (!is.null(subtitle)) {
+          paste0(if (!is.null(title)) "<br>" else "", "<sup>", subtitle, "</sup>")
+        } else ""
+      ),
+      x = 0, xanchor = "left", xref = "paper",
+      font = list(size = 17, color = "#333333")
+    )
+    lay$margin$t <- 80
+  }
 
   if (!single) {
     lay$yaxis2 <- list(

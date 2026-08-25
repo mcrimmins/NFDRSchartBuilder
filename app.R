@@ -625,6 +625,19 @@ server <- function(input, output, session) {
     )
   })
   
+  # The stations actually present in the fetched data, as a display string.
+  # Was computed inline inside output$climatology_plot; hoisted here so the
+  # Compare Variables subtitle names its stations the same way rather than
+  # growing a second copy of the lookup.
+  plotted_station_label <- reactive({
+    req(all_data_cache())
+    ids <- unique(all_data_cache()$station_id)
+    nms <- station_metadata %>%
+      filter(station_id %in% ids) %>%
+      pull(station_name) %>% unique()
+    paste(nms, collapse = ", ")
+  })
+  
   # Same shape as daily_series() above, for the Compare Variables tab: a
   # one-line wrapper so every rule lives in build_multi_series(). Deliberately
   # SEPARATE from daily_series(), which stays bound to input$variable -- the
@@ -689,11 +702,7 @@ server <- function(input, output, session) {
     
     all_data <- all_data_cache()
     
-    plotted_station_ids <- unique(all_data$station_id)
-    station_names <- station_metadata %>%
-      filter(station_id %in% plotted_station_ids) %>%
-      pull(station_name) %>% unique()
-    station_label <- paste(station_names, collapse = ", ")
+    station_label <- plotted_station_label()
     
     # Daily aggregation -- shared with the interactive plot and the CSV
     # export. Lived here as one of three verbatim copies until now.
@@ -963,13 +972,32 @@ server <- function(input, output, session) {
     req(input$multi_var_a, input$multi_var_b, input$plot_year,
         input$daily_stat, fetched_fuel_model())
     
+    # Title and subtitle follow the Static tab: variable(s) on top, then
+    # station | year | filter beneath. The climatology clause that tab carries
+    # is dropped, because this tab has no climatology to compare against.
+    #
+    # Units are left OFF the title even though the Static tab includes them
+    # for weather variables: here BOTH axes are already labelled with their
+    # own units, so repeating them in the headline just makes it long.
+    # Fuel model moves to the subtitle rather than the title, because with two
+    # variables it can no longer sit next to the one index it qualifies.
+    sel   <- unique(c(input$multi_var_a, input$multi_var_b))
+    ttl   <- paste(vapply(sel, pretty_variable_name, character(1)), collapse = " vs ")
+    parts <- c(plotted_station_label(), as.character(input$plot_year))
+    if (any(!(sel %in% weather_vars))) {
+      parts <- c(parts, paste("Fuel Model", fetched_fuel_model()))
+    }
+    if (!is.null(smooth_spec())) parts <- c(parts, smooth_spec())
+    
     plot_multi_series(
       multi_series(), c(input$multi_var_a, input$multi_var_b),
       input$plot_year, input$daily_stat,
       show_forecast = isTRUE(input$show_forecast),
       smooth        = isTRUE(input$smooth_on),
       smooth_spec   = smooth_spec(),
-      label_fn      = pretty_variable_name
+      label_fn      = pretty_variable_name,
+      title         = ttl,
+      subtitle      = paste(parts, collapse = "  |  ")
     )
   })
   

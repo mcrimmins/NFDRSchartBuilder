@@ -225,6 +225,45 @@ if (!identical(.or(.lay$hovermode, ""), "x unified"))
 
 .check("mitigations", .problems)
 
+# ================================================== title ===================
+
+.say("")
+.rule()
+.say("TITLE -- plotly has no subtitle argument, so it is one string")
+.rule()
+
+.b_t <- plotly::plotly_build(
+  plot_multi_series(.ms, c(.VAR_A, .VAR_B), .yr, .STAT,
+                    title = "Alpha vs Beta", subtitle = "STATION  |  2026"))
+.tt <- .or(.b_t$x$layout$title$text, "")
+
+.say("")
+.say("  title text: ", .tt)
+.say("  align: x=", .or(.b_t$x$layout$title$x, "UNSET"),
+     " xanchor=", .or(.b_t$x$layout$title$xanchor, "UNSET"))
+.say("  top margin: ", .or(.b_t$x$layout$margin$t, "UNSET"))
+
+.problems <- character(0)
+if (!grepl("Alpha vs Beta", .tt, fixed = TRUE))
+  .problems <- c(.problems, "the title text is missing")
+if (!grepl("STATION  |  2026", .tt, fixed = TRUE))
+  .problems <- c(.problems, "the subtitle text is missing")
+if (!grepl("<sup>", .tt, fixed = TRUE))
+  .problems <- c(.problems, "the subtitle is not marked up as <sup> -- it will render at title size")
+if (!identical(.or(.b_t$x$layout$title$xanchor, ""), "left"))
+  .problems <- c(.problems, "the title is not left-aligned like the Static tab's")
+if (is.null(.b_t$x$layout$margin$t) || .b_t$x$layout$margin$t < 80)
+  .problems <- c(.problems, "top margin was not grown -- the title will overlap the plotting area")
+
+# And no title block at all when neither is supplied, so the function stays
+# usable headless without a stray empty title reserving space.
+.b_nt <- plotly::plotly_build(plot_multi_series(.ms, c(.VAR_A, .VAR_B), .yr, .STAT))
+.say("  with no title supplied, layout$title present: ", !is.null(.b_nt$x$layout$title))
+if (!is.null(.b_nt$x$layout$title))
+  .problems <- c(.problems, "a title block was added when none was asked for")
+
+.check("title", .problems)
+
 # ================================================== smoothing ================
 
 .say("")
