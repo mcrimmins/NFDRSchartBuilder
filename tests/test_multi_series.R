@@ -308,6 +308,53 @@ if (is.null(.dup)) {
 }
 .check("duplicate collapse", .problems)
 
+# ============================================ smoothing filter rule =========
+#
+# smooth_fun_allowed() lives in R/daily_series.R because the rule is about data
+# semantics, not this tab -- but it is tested HERE because the multi-variable
+# case is the one that made it necessary, and because tests/test_daily_series.R
+# computes its own check total from the baseline file count, so adding checks
+# there would break its arithmetic.
+#
+# The rule: a rolling SUM of an already-cumulative series is meaningless. On the
+# Compare Variables tab one filter control drives BOTH variables, so if either
+# slot holds a cumulative series the sum comes off for both. NULL and empty
+# inputs matter because active_variables() is NULL before the first render.
+
+.say("")
+.rule()
+.say("FILTER RULE -- rolling sum off the menu when a cumulative series is in play")
+.rule()
+
+.rule_cases <- list(
+  list(v = "energyReleaseComponent",                        want = c("mean", "sum", "median"), why = "ordinary variable"),
+  list(v = "precip_total",                                  want = c("mean", "sum", "median"), why = "daily total is not cumulative"),
+  list(v = "precip_cum",                                    want = c("mean", "median"),        why = "cumulative"),
+  list(v = c("energyReleaseComponent", "relativeHumidity"), want = c("mean", "sum", "median"), why = "two ordinary variables"),
+  list(v = c("energyReleaseComponent", "precip_cum"),       want = c("mean", "median"),        why = "slot b cumulative"),
+  list(v = c("precip_cum", "relativeHumidity"),             want = c("mean", "median"),        why = "slot a cumulative"),
+  list(v = c("precip_cum", "precip_cum"),                   want = c("mean", "median"),        why = "both slots cumulative"),
+  list(v = character(0),                                    want = c("mean", "sum", "median"), why = "nothing selected"),
+  list(v = NULL,                                            want = c("mean", "sum", "median"), why = "NULL before first render")
+)
+
+.problems <- character(0)
+.say("")
+for (rc in .rule_cases) {
+  got <- smooth_fun_allowed(rc$v)
+  ok  <- identical(got, rc$want)
+  .say(sprintf("  %-42s -> [%-19s]  %s",
+               if (is.null(rc$v)) "NULL" else if (length(rc$v) == 0) "character(0)" else paste(rc$v, collapse = " + "),
+               paste(got, collapse = ", "), rc$why))
+  if (!ok) {
+    .problems <- c(.problems,
+                   paste0("[", if (is.null(rc$v)) "NULL" else paste(rc$v, collapse = " + "),
+                          "] expected [", paste(rc$want, collapse = ", "),
+                          "] got [", paste(got, collapse = ", "), "]"))
+  }
+}
+.check("filter rule", .problems)
+
 # ================================================== clean failure ===========
 
 .say("")

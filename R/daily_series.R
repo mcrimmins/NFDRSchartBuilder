@@ -124,6 +124,30 @@ roll_apply <- function(x, n, fun = "mean", align = "center", min_frac = 1) {
 }
 
 # ==============================================================================
+# smooth_fun_allowed
+# ==============================================================================
+# Which rolling filters make sense for the variable(s) currently being plotted.
+#
+# A rolling SUM of an already-cumulative series is meaningless -- precip_cum is
+# a running total, so summing a window of it produces a number with no physical
+# reading. It is taken off the menu rather than left there to be picked by
+# accident.
+#
+# This is a plain function, and it lives here rather than in app.R, for the same
+# reason the aggregation chain does: it is a DATA-semantics rule, it has to hold
+# for every tab that offers smoothing, and a rule buried in an observeEvent
+# cannot be tested. The UI labels stay in app.R -- this returns bare function
+# names and lets the caller map them to whatever the menu says.
+#
+# Takes a vector because the Compare Variables tab plots two variables at once
+# and the single filter control applies to both: if EITHER is cumulative, the
+# rolling sum is wrong for that one, so it comes off for both.
+smooth_fun_allowed <- function(variables) {
+  fns <- c("mean", "sum", "median")
+  if ("precip_cum" %in% variables) setdiff(fns, "sum") else fns
+}
+
+# ==============================================================================
 # build_daily_series
 # ==============================================================================
 # Aggregate hourly station data to a daily series for one variable.

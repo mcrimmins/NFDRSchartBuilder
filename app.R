@@ -655,13 +655,34 @@ server <- function(input, output, session) {
     )
   })
   
-  # A rolling SUM of an already-cumulative series is meaningless, so it is taken
-  # off the menu for Cumulative Precipitation rather than left there to be
-  # picked by accident.
-  observeEvent(input$variable, {
+  # The variable(s) the shared smoothing controls are actually acting on.
+  # On Compare Variables that is the two slots -- NOT input$variable, which is
+  # hidden on that tab and stuck on whatever was last picked elsewhere. Every
+  # control that has to reason about "the current variable" reads this.
+  active_variables <- reactive({
+    if (identical(input$main_tabs, "Compare Variables")) {
+      c(input$multi_var_a, input$multi_var_b)
+    } else {
+      input$variable
+    }
+  })
+  
+  # A rolling SUM of an already-cumulative series is meaningless, so it comes
+  # off the menu when Cumulative Precipitation is in play. The rule itself is
+  # smooth_fun_allowed() in R/daily_series.R, where it can be tested; this is
+  # only the plumbing that maps it onto the menu labels.
+  last_allowed <- reactiveVal(NULL)
+  
+  observeEvent(active_variables(), {
     full    <- c("Rolling mean" = "mean", "Rolling sum" = "sum", "Rolling median" = "median")
-    allowed <- if (identical(input$variable, "precip_cum")) full[full != "sum"] else full
-    keep    <- if (isTRUE(input$smooth_fun %in% allowed)) input$smooth_fun else "mean"
+    allowed <- full[full %in% smooth_fun_allowed(active_variables())]
+    
+    # Switching tabs re-evaluates this. Without the guard, every tab switch
+    # would re-render the filter dropdown for no reason.
+    if (identical(allowed, last_allowed())) return()
+    last_allowed(allowed)
+    
+    keep <- if (isTRUE(input$smooth_fun %in% allowed)) input$smooth_fun else "mean"
     updateSelectInput(session, "smooth_fun", choices = allowed, selected = keep)
   }, ignoreNULL = TRUE)
   
@@ -677,7 +698,7 @@ server <- function(input, output, session) {
       paste0("Trailing: the window ends on the plotted day, so the line reaches today ",
              "but lags a turn by about ", lag, " days.")
     }
-    extra <- if (identical(input$variable, "precip_cum")) {
+    extra <- if (!("sum" %in% smooth_fun_allowed(active_variables()))) {
       " Rolling sum is unavailable here -- the series is already a running total."
     } else ""
     div(style = "font-size: 0.8em; color: #666; line-height: 1.35; margin-top: -8px;",
