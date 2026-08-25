@@ -27,7 +27,7 @@
 # HOW TO RUN
 #   With NFDRSChartBuilder.Rproj open, from the project root:
 #     source("tests/test_multi_series.R")
-#   About 20 seconds. It runs ~48 aggregations, so that every comparison is
+#   Under a minute. It runs ~48 aggregations, so that every comparison is
 #   against a freshly computed standalone result rather than a stored one.
 #
 # Helpers are dot-prefixed per CLAUDE.md so they cannot mask a shiny export.

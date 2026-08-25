@@ -204,6 +204,7 @@ ui <- fluidPage(
       uiOutput("stale_data_banner"),
       
       tabsetPanel(
+        id = "main_tabs",
         #tabPanel("Static Plot", plotOutput("climatology_plot", height = "700px")),
         tabPanel("Static Plot",
                  plotOutput("climatology_plot", height = "600px"),
@@ -217,6 +218,18 @@ ui <- fluidPage(
                    plotlyOutput("plotly_climatology_plot", height = "700px"),
                    br(),
                    checkboxInput("show_hist_years", "Show Historic Years", value = FALSE)
+                 )
+        ),
+        # --- Compare Variables -------------------------------------------
+        # Placeholder for the two-variable dual-axis plot. The tab exists now,
+        # ahead of its renderer, so that the tabsetPanel id above and the
+        # conditional sidebar controls can each be verified on their own
+        # rather than inside a step that is also debugging a plot.
+        tabPanel("Compare Variables",
+                 div(style = "padding: 40px 20px; color: #666;",
+                     h4("Compare Variables"),
+                     p("Under construction. This tab will plot two variables for the",
+                       "selected year, each against its own y-axis.")
                  )
         ),
         tabPanel("Summary Stats", DTOutput("summary_table")),
