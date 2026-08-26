@@ -7,3 +7,12 @@ docs/
 scripts/
 README.md
 .gitattributes
+
+# Never ship these. Republish bundles the WORKING DIRECTORY, and .gitignore
+# has no bearing on that -- .Renviron is kept out of git but would otherwise
+# sit in the bundle. FEMS_USER and FEMS_KEY are set as environment variables
+# in the Connect UI, so the deployed app does not need the file.
+.Renviron
+
+# Instructions for Claude; no reason for them to reach a production server.
+CLAUDE.md
