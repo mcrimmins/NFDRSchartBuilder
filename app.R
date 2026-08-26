@@ -241,7 +241,11 @@ ui <- fluidPage(
         # form. The Static and Interactive tabs remain the climatology view.
         tabPanel("Compare Variables",
                  uiOutput("multi_same_note"),
-                 plotlyOutput("multi_series_plot", height = "700px")
+                 plotlyOutput("multi_series_plot", height = "700px"),
+                 br(),
+                 div(style = "text-align: center; margin-top: 10px; margin-bottom: 20px;",
+                     downloadButton("download_multi_data", "Download Plot Data (CSV)", class = "btn-primary")
+                 )
         ),
         tabPanel("Summary Stats", DTOutput("summary_table")),
         tabPanel("About",
@@ -1112,6 +1116,34 @@ server <- function(input, output, session) {
       formatStyle('Anomaly', color = styleInterval(0, c('blue', 'red')), fontWeight = 'bold') %>%
       formatString('% of Normal', suffix = '%')
   })
+  
+  # ---------------------------------------------------------------------
+  # Download Handler -- Compare Variables
+  # ---------------------------------------------------------------------
+  # The reshape itself is build_multi_export() in R/multi_series.R, so that
+  # the wide frame can be checked against the long one by a test rather than
+  # by clicking the button and opening the file.
+  output$download_multi_data <- downloadHandler(
+    filename = function() {
+      sm <- if (isTRUE(input$smooth_on)) {
+        paste0("_smooth", input$smooth_window,
+               if (identical(input$smooth_align, "center")) "c" else "t",
+               substr(input$smooth_fun, 1, 3))
+      } else ""
+      vars <- paste(unique(c(input$multi_var_a, input$multi_var_b)), collapse = "-")
+      paste0("NFDRS_compare_", vars, "_", input$daily_stat, "_",
+             input$plot_year, sm, ".csv")
+    },
+    content = function(file) {
+      req(all_data_cache(), input$multi_var_a, input$multi_var_b,
+          input$daily_stat, input$plot_year)
+      write.csv(
+        build_multi_export(multi_series(),
+                           c(input$multi_var_a, input$multi_var_b),
+                           input$plot_year),
+        file, row.names = FALSE, na = "")
+    }
+  )
   
   # ---------------------------------------------------------------------
   # Download Handler for Plot Data

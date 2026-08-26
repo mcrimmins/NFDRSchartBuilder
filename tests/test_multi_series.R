@@ -308,6 +308,104 @@ if (is.null(.dup)) {
 }
 .check("duplicate collapse", .problems)
 
+# ============================================ wide CSV export ===============
+#
+# build_multi_export() reshapes the long frame into the download's wide one.
+# The point of testing it is that a reshape can lose or misplace values while
+# still producing a plausible-looking table -- and the only other way to notice
+# is to click the button and read the file.
+
+.say("")
+.rule()
+.say("CSV EXPORT -- wide frame carries the same numbers as the long one")
+.rule()
+
+.ex_vars <- c(.VAR_A_EXPORT <- "energyReleaseComponent", "relativeHumidity")
+.ex_long <- build_multi_series(all_single, .ex_vars, "max", c(1, 12))
+.ex_yr   <- max(.ex_long$year)
+
+.EXPECT_EXPORT_COLS <- c(
+  "Date",
+  "energyReleaseComponent_Observed", "energyReleaseComponent_Observed_Smoothed",
+  "energyReleaseComponent_Forecast",
+  "relativeHumidity_Observed", "relativeHumidity_Observed_Smoothed",
+  "relativeHumidity_Forecast")
+
+.wide <- build_multi_export(.ex_long, .ex_vars, .ex_yr)
+
+.say("")
+.say("  plot year ", .ex_yr, ": ", nrow(.wide), " rows x ", ncol(.wide), " columns")
+.say("  columns: ", paste(names(.wide), collapse = ", "))
+
+.problems <- character(0)
+
+if (!identical(names(.wide), .EXPECT_EXPORT_COLS)) {
+  .problems <- c(.problems,
+                 paste0("column contract: expected [", paste(.EXPECT_EXPORT_COLS, collapse = ", "),
+                        "] got [", paste(names(.wide), collapse = ", "), "]"))
+}
+
+# Date must never carry month_day's synthetic year.
+if (any(grepl("[0-9]{4}", .wide$Date))) {
+  .problems <- c(.problems, "Date contains a 4-digit year -- month_day's synthetic 2024 leaked into the file")
+}
+if (anyDuplicated(.wide$Date) > 0) {
+  .problems <- c(.problems, "Date repeats -- the reshape produced more than one row per calendar day")
+}
+
+# The numbers themselves. For each variable and record type, the wide column
+# must contain exactly the long frame's values, day for day.
+for (v in .ex_vars) {
+  for (rt in c("O", "F")) {
+    col  <- paste0(v, if (rt == "O") "_Observed" else "_Forecast")
+    long <- .ex_long %>%
+      filter(variable == v, year == .ex_yr, record_type == rt) %>%
+      arrange(month_day)
+    if (nrow(long) == 0) next
+    key  <- format(long$month_day, "%b-%d")
+    got  <- .wide[[col]][match(key, .wide$Date)]
+    want <- round(long$value, 2)
+    bad  <- sum(!(got == want | (is.na(got) & is.na(want))), na.rm = TRUE) +
+            sum(xor(is.na(got), is.na(want)))
+    .say("    ", col, ": ", nrow(long), " days, ", bad, " mismatches")
+    if (bad > 0) {
+      .problems <- c(.problems, paste0(col, " differs from the long frame in ", bad, " days"))
+    }
+  }
+}
+
+.check("csv export values", .problems)
+
+# --- schema stability ------------------------------------------------------
+.say("")
+.say("  schema is the same with smoothing off and on")
+
+.problems <- character(0)
+.sm_off <- .wide
+.sm_on  <- build_multi_export(
+  build_multi_series(all_single, .ex_vars, "max", c(1, 12),
+                     smooth = TRUE, smooth_window = 7),
+  .ex_vars, .ex_yr)
+
+.n_off <- sum(!is.na(.sm_off[["energyReleaseComponent_Observed_Smoothed"]]))
+.n_on  <- sum(!is.na(.sm_on[["energyReleaseComponent_Observed_Smoothed"]]))
+.say("    smoothed column populated: ", .n_off, " rows (off), ", .n_on, " rows (on)")
+
+if (!identical(names(.sm_off), names(.sm_on))) {
+  .problems <- c(.problems, "the columns change between smoothing off and on -- the schema is not stable")
+}
+if (.n_off != 0L) .problems <- c(.problems, "the smoothed column has values with smoothing OFF")
+if (.n_on  == 0L) .problems <- c(.problems, "the smoothed column is empty with smoothing ON")
+
+# One variable in both slots collapses, so the export narrows to one group.
+.dup_wide <- build_multi_export(.ex_long, c(.VAR_A_EXPORT, .VAR_A_EXPORT), .ex_yr)
+.say("    same variable twice: ", ncol(.dup_wide), " columns (expected 4)")
+if (ncol(.dup_wide) != 4L) {
+  .problems <- c(.problems, paste0("duplicate variables produced ", ncol(.dup_wide), " columns, expected 4"))
+}
+
+.check("csv export schema", .problems)
+
 # ============================================ smoothing filter rule =========
 #
 # smooth_fun_allowed() lives in R/daily_series.R because the rule is about data

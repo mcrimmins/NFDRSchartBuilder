@@ -132,3 +132,71 @@ build_multi_series <- function(all_data, variables, daily_stat, month_range,
 
   bind_rows(blocks)
 }
+
+# ==============================================================================
+# build_multi_export
+# ==============================================================================
+# Reshape build_multi_series() output into the wide frame the Compare Variables
+# CSV download writes: one row per calendar day, one column GROUP per variable.
+#
+#   Date, <var>_Observed, <var>_Observed_Smoothed, <var>_Forecast, <var2>_...
+#
+# A plain function, and separate from the downloadHandler, for the usual reason:
+# a reshape buried in a handler can only be checked by clicking the button and
+# opening the file. Here tests/test_multi_series.R can prove the wide frame
+# carries the same numbers as the long one.
+#
+# SCHEMA STABILITY: the _Observed_Smoothed columns are always present, empty
+# when smoothing is off, matching what the Static tab's export already promises.
+# A CSV whose columns appear and disappear depending on a checkbox is miserable
+# to build a spreadsheet on top of.
+#
+# COLUMN NAMES use the RAW variable names, not the display labels. Display
+# labels carry units and parentheses ("Relative Humidity (%)"), which make
+# hostile column headers; the raw names also match what the filename uses, so a
+# file and its columns agree.
+#
+# The join is a FULL join, not left: observed and forecast cover different parts
+# of the year, and two variables can have different gaps. Anything short of a
+# full join would silently drop days that exist for one series and not another.
+#
+#   daily       output of build_multi_series()
+#   variables   one or more variable names, de-duplicated as everywhere else
+#   plot_year   the year to export -- this tab is a single-year comparison, so
+#               the climatology columns the Static export carries have no
+#               counterpart here
+build_multi_export <- function(daily, variables, plot_year, digits = 2) {
+
+  variables <- unique(as.character(variables))
+  if (length(variables) < 1L) {
+    stop("build_multi_export(): need at least one variable.")
+  }
+  yr <- as.integer(plot_year)
+
+  blocks <- lapply(variables, function(v) {
+
+    rows <- daily[daily$variable == v & daily$year == yr, , drop = FALSE]
+
+    obs <- rows[rows$record_type == "O",
+                c("month_day", "value", "value_smooth"), drop = FALSE]
+    obs$value        <- round(obs$value, digits)
+    obs$value_smooth <- round(obs$value_smooth, digits)
+    names(obs) <- c("month_day",
+                    paste0(v, "_Observed"),
+                    paste0(v, "_Observed_Smoothed"))
+
+    fcst <- rows[rows$record_type == "F", c("month_day", "value"), drop = FALSE]
+    fcst$value <- round(fcst$value, digits)
+    names(fcst) <- c("month_day", paste0(v, "_Forecast"))
+
+    full_join(obs, fcst, by = "month_day")
+  })
+
+  out <- Reduce(function(a, b) full_join(a, b, by = "month_day"), blocks)
+  out <- out[order(out$month_day), , drop = FALSE]
+
+  # Same "%b-%d" as the Static tab's export: month_day's year is synthetic and
+  # must never reach the file, for the same reason it must never reach the axis.
+  out$Date <- format(out$month_day, "%b-%d")
+  out[, c("Date", setdiff(names(out), c("Date", "month_day"))), drop = FALSE]
+}

@@ -354,6 +354,9 @@ if (!exists("MULTI_SERIES_COLORS")) {
 .problems <- character(0)
 if (!.plot_present) .problems <- c(.problems, "the Compare Variables tab has no plot output")
 if (!.note_present) .problems <- c(.problems, "the same-variable note output is missing")
+.dl_present <- "download_multi_data" %in% .ids
+.say("  downloadButton(\"download_multi_data\") present: ", .dl_present)
+if (!.dl_present) .problems <- c(.problems, "the CSV download button is missing from the tab")
 if (grepl("Under construction", .html, fixed = TRUE)) {
   .problems <- c(.problems, "the step-2 placeholder copy is still in the tab")
 }
