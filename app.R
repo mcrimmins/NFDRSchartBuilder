@@ -65,6 +65,7 @@ source("R/fems_download.R")
 source("R/daily_series.R")
 source("R/multi_series.R")
 source("R/multi_series_plot.R")
+source("R/export_naming.R")
 
 # Start of the fetch window. 2005 rather than the previous 2004 because the
 # climatology baseline, the plot-year input, and every downstream filter all
@@ -263,7 +264,13 @@ ui <- fluidPage(
                        tags$li("Pick a variable. The list reflects what was fetched, and covers NFDRS indices (ERC, BI, KBDI, fuel moistures) as well as weather variables (temperature, RH, wind, VPD, HDW)."),
                        tags$li("Pick a daily statistic and a year. ", tags$b("Note:"), " Precipitation and Burn Period ignore the statistic and compute daily totals or hour counts instead."),
                        tags$li("Use the ", tags$b("Month Range"), " slider to focus on a season. The Summary Stats table recalculates to match."),
-                       tags$li("Optionally tick ", tags$b("Overlay a smoothed line"), " to lay a rolling filter over the selected year. How it behaves at the ends of the series is described below.")
+                       tags$li("Optionally tick ", tags$b("Overlay a smoothed line"), " to lay a rolling filter over the selected year. How it behaves at the ends of the series is described below."),
+                       tags$li("To compare two variables against each other, open the ",
+                               tags$b("Compare Variables"), " tab. It plots both for the ",
+                               "selected year, each against its own axis, and the sidebar ",
+                               "switches to a pair of dropdowns. The daily statistic, month ",
+                               "range and smoothing settings apply to both. Read the caution ",
+                               "below before drawing conclusions from it.")
                      ),
                      
                      hr(style = "margin-top: 20px; margin-bottom: 20px;"),
@@ -275,7 +282,18 @@ ui <- fluidPage(
                        tags$li(tags$b("Historical baseline:"), " Percentile ribbons, dashed thresholds and the normal average use a 21-year baseline, ", tags$b("2005 to 2025"), "."),
                        tags$li(tags$b("Derived metrics:"), " Standard NFDRS indices come from FEMS. Burn Period (hours per day with RH below 20%) and cumulative precipitation are computed here from the hourly weather feed."),
                        tags$li(tags$b("Smoothed line:"), " The optional overlay applies a rolling mean, sum or median to the selected year's observed values only -- the climatology mean and the percentile bands are never smoothed. The unsmoothed daily series stays visible as a thin grey line, and the filter in use is named in the plot subtitle."),
-                       tags$li(tags$b("Smoothing at the ends:"), " A smoothed value appears only where a complete window of observations exists. A centered window therefore stops short of the most recent day by half its width, so a 31-day centered mean ends about 15 days back. Choose a trailing window if you need the line to reach today, accepting that it lags behind a change. Gaps in the record are left blank rather than filled from a partial window.")
+                       tags$li(tags$b("Smoothing at the ends:"), " A smoothed value appears only where a complete window of observations exists. A centered window therefore stops short of the most recent day by half its width, so a 31-day centered mean ends about 15 days back. Choose a trailing window if you need the line to reach today, accepting that it lags behind a change. Gaps in the record are left blank rather than filled from a partial window."),
+                       tags$li(tags$b("Two axes, two independent scales:"),
+                               " On the Compare Variables tab the two series are drawn against ",
+                               "separate y-axes whose ranges have nothing to do with each other. ",
+                               "Where the lines cross, or appear to rise and fall together, is an ",
+                               "artefact of how the two scales happen to land -- not a relationship ",
+                               "in the data. Each axis is coloured to match its line, and only the ",
+                               "left axis draws gridlines, precisely so the two are not read as a ",
+                               "common grid. Hover to read exact values for both series at a date ",
+                               "rather than judging by eye. The tab shows no percentile bands for ",
+                               "the same reason: two translucent ranges on unrelated scales mislead ",
+                               "more than two lines do.")
                      ),
                      
                      p(style = "color: #888; font-size: 0.85em; margin-top: 20px;",
@@ -633,13 +651,21 @@ server <- function(input, output, session) {
   # Was computed inline inside output$climatology_plot; hoisted here so the
   # Compare Variables subtitle names its stations the same way rather than
   # growing a second copy of the lookup.
-  plotted_station_label <- reactive({
+  # The stations actually present in the fetched data. Carries BOTH the ids and
+  # the names, because the plot subtitle wants names, the CSV wants both, and
+  # the filename falls back to ids when a station is missing from the metadata
+  # table. One lookup, three consumers.
+  plotted_stations <- reactive({
     req(all_data_cache())
-    ids <- unique(all_data_cache()$station_id)
+    ids <- unique(as.character(all_data_cache()$station_id))
     nms <- station_metadata %>%
-      filter(station_id %in% ids) %>%
+      filter(as.character(station_id) %in% ids) %>%
       pull(station_name) %>% unique()
-    paste(nms, collapse = ", ")
+    list(ids = ids, names = nms)
+  })
+  
+  plotted_station_label <- reactive({
+    paste(plotted_stations()$names, collapse = ", ")
   })
   
   # Same shape as daily_series() above, for the Compare Variables tab: a
@@ -1131,7 +1157,8 @@ server <- function(input, output, session) {
                substr(input$smooth_fun, 1, 3))
       } else ""
       vars <- paste(unique(c(input$multi_var_a, input$multi_var_b)), collapse = "-")
-      paste0("NFDRS_compare_", vars, "_", input$daily_stat, "_",
+      stn  <- station_slug(plotted_stations()$names, plotted_stations()$ids)
+      paste0("NFDRS_compare_", stn, "_", vars, "_", input$daily_stat, "_",
              input$plot_year, sm, ".csv")
     },
     content = function(file) {
@@ -1140,7 +1167,9 @@ server <- function(input, output, session) {
       write.csv(
         build_multi_export(multi_series(),
                            c(input$multi_var_a, input$multi_var_b),
-                           input$plot_year),
+                           input$plot_year,
+                           station_names = plotted_stations()$names,
+                           station_ids   = plotted_stations()$ids),
         file, row.names = FALSE, na = "")
     }
   )
@@ -1157,7 +1186,12 @@ server <- function(input, output, session) {
                if (identical(input$smooth_align, "center")) "c" else "t",
                substr(input$smooth_fun, 1, 3))
       } else ""
-      paste0("NFDRS_", input$variable, "_", input$daily_stat, "_", input$plot_year, sm, ".csv")
+      # Station in the name: downloads land in one flat folder, and without it
+      # two exports of the same variable and year from different stations
+      # cannot be told apart afterwards.
+      stn <- station_slug(plotted_stations()$names, plotted_stations()$ids)
+      paste0("NFDRS_", stn, "_", input$variable, "_", input$daily_stat, "_",
+             input$plot_year, sm, ".csv")
     },
     content = function(file) {
       # Require the data to be fetched first
@@ -1203,7 +1237,9 @@ server <- function(input, output, session) {
         left_join(df_obs, by = "month_day") %>%
         left_join(df_fcst, by = "month_day") %>%
         mutate(Date = format(month_day, "%b-%d")) %>%
-        select(Date, Historical_Mean, Min_0, Pct_33, Pct_66, Pct_90, Pct_97, Max_100, Current_Observed, Current_Observed_Smoothed, Current_Forecast)
+        mutate(Station_Names = paste(plotted_stations()$names, collapse = "; "),
+               Station_IDs   = paste(plotted_stations()$ids,   collapse = "; ")) %>%
+        select(Station_Names, Station_IDs, Date, Historical_Mean, Min_0, Pct_33, Pct_66, Pct_90, Pct_97, Max_100, Current_Observed, Current_Observed_Smoothed, Current_Forecast)
       
       # Write the CSV
       write.csv(final_data, file, row.names = FALSE, na = "")

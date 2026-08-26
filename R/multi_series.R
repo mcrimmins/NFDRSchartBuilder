@@ -165,7 +165,18 @@ build_multi_series <- function(all_data, variables, daily_stat, month_range,
 #   plot_year   the year to export -- this tab is a single-year comparison, so
 #               the climatology columns the Static export carries have no
 #               counterpart here
-build_multi_export <- function(daily, variables, plot_year, digits = 2) {
+#   station_names, station_ids
+#               which stations the series were averaged from. ALWAYS produce the
+#               two columns, NA when not supplied, so the schema does not shift
+#               depending on how the function was called.
+#
+# WHY THE STATIONS ARE REPEATED ON EVERY ROW rather than written once in a
+# header: a commented header line breaks naive CSV readers, and a value that
+# appears once is lost the moment somebody concatenates two exports or drops the
+# table into a pivot. A constant column is redundant and survives everything.
+# Values are joined with "; " rather than ", " so no cell needs quoting.
+build_multi_export <- function(daily, variables, plot_year, digits = 2,
+                               station_names = NULL, station_ids = NULL) {
 
   variables <- unique(as.character(variables))
   if (length(variables) < 1L) {
@@ -198,5 +209,15 @@ build_multi_export <- function(daily, variables, plot_year, digits = 2) {
   # Same "%b-%d" as the Static tab's export: month_day's year is synthetic and
   # must never reach the file, for the same reason it must never reach the axis.
   out$Date <- format(out$month_day, "%b-%d")
-  out[, c("Date", setdiff(names(out), c("Date", "month_day"))), drop = FALSE]
+
+  join_or_na <- function(x) {
+    x <- as.character(x)
+    x <- x[!is.na(x) & nzchar(trimws(x))]
+    if (length(x) == 0L) NA_character_ else paste(x, collapse = "; ")
+  }
+  out$Station_Names <- join_or_na(station_names)
+  out$Station_IDs   <- join_or_na(station_ids)
+
+  lead <- c("Station_Names", "Station_IDs", "Date")
+  out[, c(lead, setdiff(names(out), c(lead, "month_day"))), drop = FALSE]
 }

@@ -37,6 +37,7 @@ library(dplyr)
 
 source("R/daily_series.R")
 source("R/multi_series.R")
+source("R/export_naming.R")
 
 .OUT_DIR <- "tests/logs"
 .RAW_RDS <- file.path(.OUT_DIR, "baseline_rawdata.rds")
@@ -325,13 +326,17 @@ if (is.null(.dup)) {
 .ex_yr   <- max(.ex_long$year)
 
 .EXPECT_EXPORT_COLS <- c(
-  "Date",
+  "Station_Names", "Station_IDs", "Date",
   "energyReleaseComponent_Observed", "energyReleaseComponent_Observed_Smoothed",
   "energyReleaseComponent_Forecast",
   "relativeHumidity_Observed", "relativeHumidity_Observed_Smoothed",
   "relativeHumidity_Forecast")
 
-.wide <- build_multi_export(.ex_long, .ex_vars, .ex_yr)
+.STN_NAMES <- c("SAGUARO", "MT. LEMMON")
+.STN_IDS   <- c("21202", "21208")
+
+.wide <- build_multi_export(.ex_long, .ex_vars, .ex_yr,
+                            station_names = .STN_NAMES, station_ids = .STN_IDS)
 
 .say("")
 .say("  plot year ", .ex_yr, ": ", nrow(.wide), " rows x ", ncol(.wide), " columns")
@@ -352,6 +357,20 @@ if (any(grepl("[0-9]{4}", .wide$Date))) {
 if (anyDuplicated(.wide$Date) > 0) {
   .problems <- c(.problems, "Date repeats -- the reshape produced more than one row per calendar day")
 }
+
+# The stations must be on EVERY row -- the point of a constant column is that it
+# survives concatenation and pivoting, which a header line would not.
+.say("")
+.say("  Station_Names: ", unique(.wide$Station_Names))
+.say("  Station_IDs:   ", unique(.wide$Station_IDs))
+if (length(unique(.wide$Station_Names)) != 1L)
+  .problems <- c(.problems, "Station_Names is not constant down the column")
+if (!identical(unique(.wide$Station_Names), paste(.STN_NAMES, collapse = "; ")))
+  .problems <- c(.problems, "Station_Names does not carry the supplied names")
+if (!identical(unique(.wide$Station_IDs), paste(.STN_IDS, collapse = "; ")))
+  .problems <- c(.problems, "Station_IDs does not carry the supplied ids")
+if (any(grepl(",", c(.wide$Station_Names, .wide$Station_IDs), fixed = TRUE)))
+  .problems <- c(.problems, "a station cell contains a comma -- it will need CSV quoting")
 
 # The numbers themselves. For each variable and record type, the wide column
 # must contain exactly the long frame's values, day for day.
@@ -385,7 +404,17 @@ for (v in .ex_vars) {
 .sm_on  <- build_multi_export(
   build_multi_series(all_single, .ex_vars, "max", c(1, 12),
                      smooth = TRUE, smooth_window = 7),
-  .ex_vars, .ex_yr)
+  .ex_vars, .ex_yr, station_names = .STN_NAMES, station_ids = .STN_IDS)
+
+# Called with no station information at all, the columns must still be there,
+# empty. A schema that depends on how the function was called is not a schema.
+.no_stn <- build_multi_export(.ex_long, .ex_vars, .ex_yr)
+.say("    with no stations supplied: ", ncol(.no_stn), " columns, Station_Names = ",
+     ifelse(is.na(.no_stn$Station_Names[1]), "NA", .no_stn$Station_Names[1]))
+if (!identical(names(.no_stn), .EXPECT_EXPORT_COLS))
+  .problems <- c(.problems, "columns change when station information is omitted")
+if (!all(is.na(.no_stn$Station_Names)))
+  .problems <- c(.problems, "Station_Names should be NA when no names are supplied")
 
 .n_off <- sum(!is.na(.sm_off[["energyReleaseComponent_Observed_Smoothed"]]))
 .n_on  <- sum(!is.na(.sm_on[["energyReleaseComponent_Observed_Smoothed"]]))
@@ -399,12 +428,50 @@ if (.n_on  == 0L) .problems <- c(.problems, "the smoothed column is empty with s
 
 # One variable in both slots collapses, so the export narrows to one group.
 .dup_wide <- build_multi_export(.ex_long, c(.VAR_A_EXPORT, .VAR_A_EXPORT), .ex_yr)
-.say("    same variable twice: ", ncol(.dup_wide), " columns (expected 4)")
-if (ncol(.dup_wide) != 4L) {
-  .problems <- c(.problems, paste0("duplicate variables produced ", ncol(.dup_wide), " columns, expected 4"))
+.say("    same variable twice: ", ncol(.dup_wide), " columns (expected 6)")
+if (ncol(.dup_wide) != 6L) {
+  .problems <- c(.problems, paste0("duplicate variables produced ", ncol(.dup_wide), " columns, expected 6"))
 }
 
 .check("csv export schema", .problems)
+
+# ============================================ export filenames ==============
+#
+# station_slug() names the file. Without a station in the name, two downloads of
+# the same variable and year from different stations land in one flat folder and
+# cannot be told apart -- or silently overwrite each other.
+
+.say("")
+.rule()
+.say("EXPORT FILENAMES -- station_slug() must be safe and unambiguous")
+.rule()
+
+.slug_cases <- list(
+  list(n = "SAGUARO",                        i = "21202", want = "SAGUARO",              why = "one station"),
+  list(n = c("SAGUARO", "MT. LEMMON"),       i = c("1","2"), want = "SAGUARO-MTLEMMON",  why = "punctuation and spaces stripped"),
+  list(n = c("A", "B", "C", "D", "E"),       i = NULL,    want = "A-B-C-plus2",          why = "long selections summarised"),
+  list(n = character(0),                     i = "21202", want = "21202",                why = "falls back to the id"),
+  list(n = NA_character_,                    i = "21202", want = "21202",                why = "NA name falls back too"),
+  list(n = "  ",                             i = "21208", want = "21208",                why = "blank name falls back"),
+  list(n = character(0),                     i = NULL,    want = "stations",             why = "nothing known at all"),
+  list(n = "###",                            i = NULL,    want = "stations",             why = "name is all punctuation")
+)
+
+.problems <- character(0)
+.say("")
+for (sc in .slug_cases) {
+  got <- station_slug(sc$n, sc$i)
+  .say(sprintf("  %-34s -> %-22s %s",
+               paste0("[", paste(ifelse(is.na(sc$n), "NA", sc$n), collapse = ", "), "]"),
+               got, sc$why))
+  if (!identical(got, sc$want)) {
+    .problems <- c(.problems, paste0("expected '", sc$want, "' got '", got, "'"))
+  }
+  if (grepl('[^A-Za-z0-9._+-]', got)) {
+    .problems <- c(.problems, paste0("'", got, "' contains a character that is unsafe in a filename"))
+  }
+}
+.check("export filenames", .problems)
 
 # ============================================ smoothing filter rule =========
 #

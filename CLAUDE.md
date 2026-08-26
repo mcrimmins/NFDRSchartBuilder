@@ -100,11 +100,37 @@ column names `app.R` already uses (`energyReleaseComponent`,
 `relativeHumidity`, `precipitation`, `vpd`, `hdw`, …). Keep it that way so data
 changes stay confined to the download layer.
 
-**The daily aggregation chain is duplicated verbatim in three places** —
-`climatology_plot`, `plotly_climatology_plot`, and the `download_plot_data`
-handler. Any change to variable dispatch or filtering must land in all three or
-the CSV export and the two plots will disagree. Extracting it into a shared
-`reactive()` is the obvious refactor and has not been done.
+**The daily aggregation chain lives in `build_daily_series()`** in
+`R/daily_series.R`. It used to be three verbatim copies — in `climatology_plot`,
+`plotly_climatology_plot` and the `download_plot_data` handler — which is why any
+change to variable dispatch or filtering had to land in three places or the
+plots and the CSV would silently disagree. It is now one function, wrapped by
+the `daily_series()` reactive.
+
+**Aggregation and rendering are PLAIN FUNCTIONS, not reactives, on purpose.**
+`build_daily_series()`, `build_multi_series()`, `build_multi_export()`,
+`plot_multi_series()` and `smooth_fun_allowed()` all take arguments and return
+values. A reactive cannot be called outside a Shiny session, and a renderer
+buried inside `renderPlotly()` or a reshape buried inside a `downloadHandler`
+can only be checked by clicking the thing and looking. Anything that a test
+should be able to reach goes in `R/` as a plain function; `app.R` keeps only
+the one-line wrapper.
+
+**The Compare Variables tab is native `plot_ly()`, not `ggplotly()`.** It is the
+only plot in the app that is. ggplot2 supports at most one secondary axis and
+only as a fixed transform of the primary, which is exactly what a dual-axis
+chart must not do. See `docs/MULTI_VARIABLE_SCOPE.md` sections 3 and 9 — the
+three mitigations there are load-bearing, and `tests/test_multi_series_plot.R`
+asserts them, including one that is an ABSENCE (no `rangemode`, `scaleanchor`,
+`matches`, `tickvals` or `dtick` on either y-axis).
+
+**`month_day` carries a SYNTHETIC year.** `build_daily_series()` builds it as
+`as.Date(format(date, "2024-%m-%d"))` so that every year can be overlaid on one
+axis. That 2024 must never reach the user: the ggplot tabs hide it with
+`scale_x_date(date_labels = "%b")`, the plotly tab needs
+`tickformat = "%b"`, and CSV exports format it as `"%b-%d"`. A structural test
+passed while the axis read "Jan 2024" on a chart of 2026 data — render the plot
+and look at it, because this class of bug is invisible to a layout assertion.
 
 **Within that chain, the `precip_cum` cumulative sum must run BEFORE the
 month-range filter**, so accumulation starts January 1 rather than at the crop
@@ -132,6 +158,17 @@ source("tests/test_fems_api_3.R")      # download benchmark + contract validatio
 source("tests/test_fems_api_4.R")      # network/parse split, page size
 source("tests/test_1300lst.R")         # local-hour verification
 source("tests/test_migration_impact.R")# how far chart values move
+```
+
+These hit the live API. The rest are offline, run in seconds to a minute, and
+are the ones to run after any change to `R/`:
+
+```r
+source("tests/test_daily_series.R")      # frozen baselines -- the chain never moves
+source("tests/test_roll_apply.R")        # the rolling filter itself
+source("tests/test_multi_series.R")      # composition, filter rule, CSV export
+source("tests/test_multi_series_plot.R") # traces, dual-axis mitigations, title
+source("tests/test_ui_structure.R")      # tabs, sidebar gating, palette contrast
 ```
 
 These hit the live API and are not automated. Several pull a full period of
